@@ -1,0 +1,73 @@
+[workspace]
+members = [
+  "crates/vecdb-core",
+  "crates/vecdb-api",
+  "crates/vecdb-cli",
+  "crates/vecdb-bench",
+]
+resolver = "2"
+
+[workspace.dependencies]
+# Async runtime
+tokio = { version = "1.36", features = ["full"] }
+# HTTP server
+axum = { version = "0.7", features = ["json", "http1", "tokio"] }
+tower = { version = "0.4", features = ["util"] }
+tower-http = { version = "0.5", features = ["trace", "cors", "timeout", "limit"] }
+tower_governor = { version = "0.4" }
+# Serialization
+serde = { version = "1.0", features = ["derive"] }
+serde_json = { version = "1.0" }
+bincode = { version = "1.3" }
+# Database
+rusqlite = { version = "0.32", features = ["bundled", "serde_json"] }
+# Parallelism
+rayon = { version = "1.9" }
+# Error handling
+thiserror = { version = "1.0" }
+anyhow = { version = "1.0" }
+# Logging and tracing
+tracing = { version = "0.1" }
+tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
+# Metrics
+metrics = { version = "0.22" }
+metrics-exporter-prometheus = { version = "0.13" }
+# Math / numerics
+ordered-float = { version = "4.2", features = ["serde"] }
+# UUID generation for doc IDs
+uuid = { version = "1.7", features = ["v4", "serde"] }
+# Time
+chrono = { version = "0.4", features = ["serde"] }
+# CLI argument parsing
+clap = { version = "4.5", features = ["derive", "env"] }
+# Config file loading
+config = { version = "0.14" }
+# Hashing for deduplication
+xxhash-rust = { version = "0.8", features = ["xxh3"] }
+# Memory-mapped files
+memmap2 = { version = "0.9" }
+# HNSW index
+instant-distance = { version = "0.6", features = ["serde", "serde-big-array"] }
+# Connection pooling for SQLite
+r2d2 = { version = "0.8" }
+r2d2_sqlite = { version = "0.25" }
+# Temp dirs for tests
+tempfile = { version = "3.10" }
+# HTTP client (vecdb-cli)
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
+# HTTP mock server for CLI tests
+wiremock = { version = "0.6" }
+# Random number generation (bench synthetic dataset)
+rand = { version = "0.8" }
+# Progress bars (bench ingest and query phases)
+indicatif = { version = "0.17" }
+
+[profile.release]
+opt-level = 3
+lto = "thin"
+codegen-units = 1
+panic = "abort"
+
+[profile.bench]
+inherits = "release"
+debug = true
