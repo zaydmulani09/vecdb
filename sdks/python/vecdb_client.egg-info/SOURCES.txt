@@ -1,0 +1,12 @@
+README.md
+pyproject.toml
+tests/test_client.py
+vecdb/__init__.py
+vecdb/client.py
+vecdb/exceptions.py
+vecdb/models.py
+vecdb_client.egg-info/PKG-INFO
+vecdb_client.egg-info/SOURCES.txt
+vecdb_client.egg-info/dependency_links.txt
+vecdb_client.egg-info/requires.txt
+vecdb_client.egg-info/top_level.txt
