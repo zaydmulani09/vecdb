@@ -1,0 +1,29 @@
+{
+  "name": "vecdb-client",
+  "version": "0.1.0",
+  "type": "module",
+  "description": "TypeScript client SDK for vecdb vector database",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "import": "./dist/index.js",
+      "types": "./dist/index.d.ts"
+    }
+  },
+  "scripts": {
+    "build": "tsc",
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "msw": "^2.14.6",
+    "typescript": "^6.0.3",
+    "vitest": "^4.1.6"
+  },
+  "vitest": {
+    "environment": "node",
+    "setupFiles": ["./tests/setup.ts"]
+  }
+}
