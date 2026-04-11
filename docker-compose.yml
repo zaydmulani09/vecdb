@@ -1,0 +1,27 @@
+version: "3.9"
+
+services:
+  vecdb:
+    build: .
+    image: vecdb:latest
+    container_name: vecdb
+    ports:
+      - "6333:6333"
+    volumes:
+      - vecdb-data:/data
+    environment:
+      - VECDB__DATA_DIR=/data
+      - VECDB__LOG_LEVEL=info
+      # Uncomment to enable API key auth:
+      # - VECDB__API_KEY=your-secret-key
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:6333/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+
+volumes:
+  vecdb-data:
+    driver: local
