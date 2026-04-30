@@ -1,0 +1,4 @@
+jupyter>=1.0.0
+notebook>=7.0.0
+vecdb-client @ ../sdks/python
+requests>=2.31.0
