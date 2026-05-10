@@ -9,3 +9,4 @@ benches/results/
 .DS_Store
 test_data_smoke/
 test_smoke_data/
+.claude/
