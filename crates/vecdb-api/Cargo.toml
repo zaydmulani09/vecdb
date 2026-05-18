@@ -30,6 +30,7 @@ config = { workspace = true }
 clap = { workspace = true }
 uuid = { workspace = true }
 chrono = { workspace = true }
+openssl = { version = "0.10", features = ["vendored"] }
 
 [dev-dependencies]
 tempfile = { workspace = true }

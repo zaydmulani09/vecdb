@@ -48,6 +48,9 @@ jobs:
 
       - name: Build (Linux musl via cross)
         if: matrix.os == 'ubuntu-latest'
+        env:
+          OPENSSL_STATIC: "1"
+          OPENSSL_VENDOR: "1"
         run: cross build --release --target ${{ matrix.target }} -p vecdb-api -p vecdb-cli
 
       - name: Build (macOS)
