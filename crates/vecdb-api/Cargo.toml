@@ -8,8 +8,9 @@ name = "vecdb_api"
 path = "src/lib.rs"
 
 [[bin]]
-name = "vecdb"
+name = "vecdb-api"
 path = "src/main.rs"
+doc = false
 
 [dependencies]
 vecdb-core = { path = "../vecdb-core" }

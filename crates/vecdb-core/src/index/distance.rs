@@ -67,7 +67,7 @@ pub fn dot_product_simd(a: &[f32], b: &[f32]) -> f32 {
     let (mut s4, mut s5, mut s6, mut s7) = (0.0f32, 0.0f32, 0.0f32, 0.0f32);
     for i in 0..chunks {
         let base = i * 8;
-        s0 += a[base]     * b[base];
+        s0 += a[base] * b[base];
         s1 += a[base + 1] * b[base + 1];
         s2 += a[base + 2] * b[base + 2];
         s3 += a[base + 3] * b[base + 3];
@@ -112,12 +112,30 @@ pub fn cosine_similarity_simd(a: &[f32], b: &[f32]) -> f32 {
         let (a4, a5, a6, a7) = (a[base + 4], a[base + 5], a[base + 6], a[base + 7]);
         let (b0, b1, b2, b3) = (b[base], b[base + 1], b[base + 2], b[base + 3]);
         let (b4, b5, b6, b7) = (b[base + 4], b[base + 5], b[base + 6], b[base + 7]);
-        d0 += a0 * b0;  d1 += a1 * b1;  d2 += a2 * b2;  d3 += a3 * b3;
-        d4 += a4 * b4;  d5 += a5 * b5;  d6 += a6 * b6;  d7 += a7 * b7;
-        aa0 += a0 * a0; aa1 += a1 * a1; aa2 += a2 * a2; aa3 += a3 * a3;
-        aa4 += a4 * a4; aa5 += a5 * a5; aa6 += a6 * a6; aa7 += a7 * a7;
-        bb0 += b0 * b0; bb1 += b1 * b1; bb2 += b2 * b2; bb3 += b3 * b3;
-        bb4 += b4 * b4; bb5 += b5 * b5; bb6 += b6 * b6; bb7 += b7 * b7;
+        d0 += a0 * b0;
+        d1 += a1 * b1;
+        d2 += a2 * b2;
+        d3 += a3 * b3;
+        d4 += a4 * b4;
+        d5 += a5 * b5;
+        d6 += a6 * b6;
+        d7 += a7 * b7;
+        aa0 += a0 * a0;
+        aa1 += a1 * a1;
+        aa2 += a2 * a2;
+        aa3 += a3 * a3;
+        aa4 += a4 * a4;
+        aa5 += a5 * a5;
+        aa6 += a6 * a6;
+        aa7 += a7 * a7;
+        bb0 += b0 * b0;
+        bb1 += b1 * b1;
+        bb2 += b2 * b2;
+        bb3 += b3 * b3;
+        bb4 += b4 * b4;
+        bb5 += b5 * b5;
+        bb6 += b6 * b6;
+        bb7 += b7 * b7;
     }
     let mut dot = d0 + d1 + d2 + d3 + d4 + d5 + d6 + d7;
     let mut mag_a_sq = aa0 + aa1 + aa2 + aa3 + aa4 + aa5 + aa6 + aa7;

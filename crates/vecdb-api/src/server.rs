@@ -99,7 +99,9 @@ pub async fn run(config: ServerConfig) -> anyhow::Result<()> {
         .layer(TimeoutLayer::new(timeout)) // 5
         .layer(TraceLayer::new_for_http()) // 4
         .layer(middleware::from_fn(security_headers)) // 3
-        .layer(GovernorLayer { config: governor_conf }) // 2
+        .layer(GovernorLayer {
+            config: governor_conf,
+        }) // 2
         .layer(RequestBodyLimitLayer::new(32 * 1024 * 1024)); // 1 — outermost (32 MiB)
 
     let addr = format!("{}:{}", config.host, config.port);

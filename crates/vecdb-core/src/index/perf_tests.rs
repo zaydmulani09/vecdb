@@ -102,12 +102,18 @@ mod tests {
         let query = vec![15.0f32, 1.0, 0.0, 0.0];
         let results = idx.search(&query, 3).unwrap();
 
-        assert!(!results.is_empty(), "parallel IVF search must return results");
+        assert!(
+            !results.is_empty(),
+            "parallel IVF search must return results"
+        );
         // The closest vector is v15; it must appear in top-3.
         assert!(
             results.iter().any(|(id, _)| id == "v15"),
             "v15 must be in top-3 results; got: {:?}",
-            results.iter().map(|(id, _)| id.as_str()).collect::<Vec<_>>()
+            results
+                .iter()
+                .map(|(id, _)| id.as_str())
+                .collect::<Vec<_>>()
         );
         // Results must be sorted descending by score.
         for i in 1..results.len() {
@@ -183,8 +189,7 @@ mod tests {
 
         // Also verify after a remove.
         idx.remove_document(&"d2".to_string()).unwrap();
-        let manual_avg =
-            idx.doc_lengths.values().sum::<usize>() as f32 / idx.total_docs as f32;
+        let manual_avg = idx.doc_lengths.values().sum::<usize>() as f32 / idx.total_docs as f32;
         assert!(
             (idx.avg_doc_length() - manual_avg).abs() < 1e-4,
             "avgdl mismatch after remove: O(1)={} manual={}",

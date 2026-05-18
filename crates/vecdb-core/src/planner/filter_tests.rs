@@ -135,8 +135,8 @@ mod tests {
     #[test]
     fn test_projection_keeps_only_selected_columns() {
         // Call apply_projection indirectly via execute_sql.
-                                                              // Direct test: build a SearchResult and manually call the projection logic
-                                                              // by running execute_sql with a SELECT id, region query.
+        // Direct test: build a SearchResult and manually call the projection logic
+        // by running execute_sql with a SELECT id, region query.
         let dir = tempdir().unwrap();
         let config = CollectionConfig::new("projcol", 3);
         let mut storage = Storage::create(dir.path(), &config).unwrap();

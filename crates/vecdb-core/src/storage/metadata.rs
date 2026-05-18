@@ -209,8 +209,7 @@ impl MetadataStore {
         use crate::types::SearchResult;
 
         let conn = self.conn()?;
-        let mut stmt =
-            conn.prepare("SELECT id, payload, text FROM vectors WHERE deleted = 0")?;
+        let mut stmt = conn.prepare("SELECT id, payload, text FROM vectors WHERE deleted = 0")?;
 
         let rows: Vec<(String, String, Option<String>)> = stmt
             .query_map([], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)))?
@@ -237,8 +236,7 @@ impl MetadataStore {
 
     pub fn list_collections(&self) -> Result<Vec<CollectionConfig>> {
         let conn = self.conn()?;
-        let mut stmt =
-            conn.prepare("SELECT config FROM collections ORDER BY created_at ASC")?;
+        let mut stmt = conn.prepare("SELECT config FROM collections ORDER BY created_at ASC")?;
         let rows = stmt
             .query_map([], |row| row.get::<_, String>(0))?
             .collect::<std::result::Result<Vec<_>, _>>()?;

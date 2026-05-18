@@ -67,8 +67,8 @@ fn build_test_app() -> Router {
 }
 
 fn build_app(state: SharedState) -> Router {
-    use axum::middleware;
     use crate::middleware::security_headers;
+    use axum::middleware;
     router(state.clone())
         .layer(middleware::from_fn_with_state(state, auth_middleware))
         .layer(middleware::from_fn(security_headers))
@@ -788,10 +788,8 @@ async fn test_server_handles_health_with_pooled_metadata() {
         .unwrap();
     let response = app.oneshot(req).await.unwrap();
     assert_eq!(response.status(), StatusCode::OK);
-    let body: Value = serde_json::from_slice(
-        &to_bytes(response.into_body(), usize::MAX).await.unwrap(),
-    )
-    .unwrap();
+    let body: Value =
+        serde_json::from_slice(&to_bytes(response.into_body(), usize::MAX).await.unwrap()).unwrap();
     assert_eq!(body["status"], "ok");
 }
 
@@ -899,11 +897,11 @@ async fn test_sql_too_long_rejected() {
     let app = build_app(state);
 
     // Build a SQL string that is well over 4096 characters.
-    let long_sql = format!(
-        "SELECT * FROM default WHERE {}",
-        "x = 1 AND ".repeat(500)
+    let long_sql = format!("SELECT * FROM default WHERE {}", "x = 1 AND ".repeat(500));
+    assert!(
+        long_sql.len() > 4096,
+        "test setup: sql must exceed 4096 chars"
     );
-    assert!(long_sql.len() > 4096, "test setup: sql must exceed 4096 chars");
 
     let body = json!({ "sql": long_sql });
     let (status, resp) = post_json(app, "/query", body).await;
