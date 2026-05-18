@@ -42,7 +42,9 @@ jobs:
         uses: msys2/setup-msys2@v2
         with:
           msystem: MINGW64
+          update: true
           install: mingw-w64-x86_64-toolchain
+          path-type: inherit
 
       - name: Build (Linux musl via cross)
         if: matrix.os == 'ubuntu-latest'
@@ -54,9 +56,9 @@ jobs:
 
       - name: Build (Windows)
         if: matrix.os == 'windows-latest'
-        shell: msys2 {0}
+        shell: pwsh
         run: |
-          export PATH="$PATH:/mingw64/bin"
+          $env:PATH = "C:\msys64\mingw64\bin;$env:PATH"
           cargo build --release --target ${{ matrix.target }} -p vecdb-api -p vecdb-cli
 
       - name: Package (tar.gz)
