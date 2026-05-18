@@ -64,7 +64,7 @@ jobs:
         if: matrix.os == 'windows-latest'
         shell: pwsh
         run: |
-          $env:PATH = "C:\msys64\mingw64\bin;$env:PATH"
+          $env:PATH = "C:\msys64\usr\bin;C:\msys64\mingw64\bin;$env:PATH"
           cargo build --release --target ${{ matrix.target }} -p vecdb-api -p vecdb-cli
 
       - name: Package (tar.gz)
