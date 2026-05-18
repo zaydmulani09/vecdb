@@ -3,3 +3,6 @@ passthrough = [
   "OPENSSL_STATIC",
   "OPENSSL_VENDOR",
 ]
+
+[target.aarch64-unknown-linux-musl]
+image = "ghcr.io/cross-rs/aarch64-unknown-linux-musl:main"
