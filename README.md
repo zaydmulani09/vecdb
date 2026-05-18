@@ -109,7 +109,7 @@ pip install ./sdks/python
 ```python
 from vecdb import VecDbClient, VectorRecord
 
-client = VecDbClient(base_url="http://localhost:8080")
+client = VecDbClient(base_url="http://localhost:6333")
 
 # Create collection
 client.create_collection("docs", dimension=768)
@@ -137,7 +137,7 @@ from vecdb import AsyncVecDbClient
 import asyncio
 
 async def main():
-    async with AsyncVecDbClient(base_url="http://localhost:8080") as client:
+    async with AsyncVecDbClient(base_url="http://localhost:6333") as client:
         results = await client.search_dense("docs", vector=[...], k=10)
 
 asyncio.run(main())
@@ -154,7 +154,7 @@ npm install ./sdks/typescript
 ```typescript
 import { VecDbClient } from "vecdb-client";
 
-const client = new VecDbClient({ baseUrl: "http://localhost:8080" });
+const client = new VecDbClient({ baseUrl: "http://localhost:6333" });
 
 // Create collection
 await client.createCollection({ name: "docs", dimension: 768 });
