@@ -75,6 +75,7 @@ impl CollectionManager {
             ".vectors",
             ".hnsw.json",
             ".ivf.json",
+            ".sq.json",
             ".sparse.json",
         ] {
             let path = self.data_dir.join(format!("{name}{suffix}"));

@@ -1,6 +1,7 @@
 pub mod backend;
 pub mod distance;
 pub mod ivf;
+pub mod scalar;
 
 pub use backend::{HnswConfig, HnswIndex, IndexBackend};
 pub use distance::{
@@ -8,9 +9,10 @@ pub use distance::{
     euclidean_distance, normalize,
 };
 pub use ivf::IvfIndex;
+pub use scalar::{ScalarQuantizedIndex, ScalarQuantizer};
 
 use crate::errors::Result;
-use crate::types::{CollectionConfig, IndexType, Vector, VectorId};
+use crate::types::{CollectionConfig, IndexType, Quantization, Vector, VectorId};
 
 // ──────────────────────────────────────────────
 // AnyIndex — dispatch enum over all backends
@@ -19,6 +21,7 @@ use crate::types::{CollectionConfig, IndexType, Vector, VectorId};
 pub enum AnyIndex {
     Hnsw(HnswIndex),
     Ivf(IvfIndex),
+    ScalarQuantized(ScalarQuantizedIndex),
 }
 
 impl IndexBackend for AnyIndex {
@@ -26,6 +29,7 @@ impl IndexBackend for AnyIndex {
         match self {
             AnyIndex::Hnsw(h) => h.build(vectors),
             AnyIndex::Ivf(i) => i.build(vectors),
+            AnyIndex::ScalarQuantized(s) => s.build(vectors),
         }
     }
 
@@ -33,6 +37,7 @@ impl IndexBackend for AnyIndex {
         match self {
             AnyIndex::Hnsw(h) => h.insert(id, vector),
             AnyIndex::Ivf(i) => i.insert(id, vector),
+            AnyIndex::ScalarQuantized(s) => s.insert(id, vector),
         }
     }
 
@@ -40,6 +45,7 @@ impl IndexBackend for AnyIndex {
         match self {
             AnyIndex::Hnsw(h) => h.search(query, k),
             AnyIndex::Ivf(i) => i.search(query, k),
+            AnyIndex::ScalarQuantized(s) => s.search(query, k),
         }
     }
 
@@ -47,6 +53,7 @@ impl IndexBackend for AnyIndex {
         match self {
             AnyIndex::Hnsw(h) => h.delete(id),
             AnyIndex::Ivf(i) => i.delete(id),
+            AnyIndex::ScalarQuantized(s) => s.delete(id),
         }
     }
 
@@ -54,6 +61,7 @@ impl IndexBackend for AnyIndex {
         match self {
             AnyIndex::Hnsw(h) => h.save(path),
             AnyIndex::Ivf(i) => i.save(path),
+            AnyIndex::ScalarQuantized(s) => s.save(path),
         }
     }
 
@@ -70,6 +78,9 @@ impl IndexBackend for AnyIndex {
             if stem.ends_with(".ivf.json") {
                 return IvfIndex::load_from(path, config);
             }
+            if stem.ends_with(".sq.json") {
+                return ScalarQuantizedIndex::load_from(path, config);
+            }
         }
         HnswIndex::load_from(path, config)
     }
@@ -78,6 +89,7 @@ impl IndexBackend for AnyIndex {
         match self {
             AnyIndex::Hnsw(h) => h.len(),
             AnyIndex::Ivf(i) => i.len(),
+            AnyIndex::ScalarQuantized(s) => s.len(),
         }
     }
 
@@ -85,6 +97,7 @@ impl IndexBackend for AnyIndex {
         match self {
             AnyIndex::Hnsw(h) => h.is_empty(),
             AnyIndex::Ivf(i) => i.is_empty(),
+            AnyIndex::ScalarQuantized(s) => s.is_empty(),
         }
     }
 
@@ -92,6 +105,7 @@ impl IndexBackend for AnyIndex {
         match self {
             AnyIndex::Hnsw(h) => h.index_type(),
             AnyIndex::Ivf(i) => i.index_type(),
+            AnyIndex::ScalarQuantized(s) => s.index_type(),
         }
     }
 
@@ -99,6 +113,7 @@ impl IndexBackend for AnyIndex {
         match self {
             AnyIndex::Hnsw(h) => h.rebuild(vectors),
             AnyIndex::Ivf(i) => i.rebuild(vectors),
+            AnyIndex::ScalarQuantized(s) => s.rebuild(vectors),
         }
     }
 }
@@ -109,7 +124,14 @@ unsafe impl Sync for AnyIndex {}
 
 impl AnyIndex {
     /// Construct the correct variant for the given collection config.
+    ///
+    /// `Quantization::ScalarInt8` selects the int8 scalar-quantized flat index
+    /// regardless of `index_type` (HNSW-over-int8 is not yet implemented); the
+    /// full-precision on-disk vectors remain authoritative.
     pub fn from_config(config: &CollectionConfig) -> Self {
+        if config.quantization == Quantization::ScalarInt8 {
+            return AnyIndex::ScalarQuantized(ScalarQuantizedIndex::new(config));
+        }
         match config.index_type {
             IndexType::IVF => AnyIndex::Ivf(IvfIndex::new(config)),
             IndexType::HNSW => AnyIndex::Hnsw(HnswIndex::from_collection_config(config)),
@@ -123,6 +145,16 @@ impl AnyIndex {
         name: &str,
         config: &CollectionConfig,
     ) -> (Self, bool) {
+        if config.quantization == Quantization::ScalarInt8 {
+            let path = data_dir.join(format!("{name}.sq.json"));
+            if path.exists() {
+                match ScalarQuantizedIndex::load_file(&path) {
+                    Ok(idx) => return (AnyIndex::ScalarQuantized(idx), true),
+                    Err(_) => return (AnyIndex::ScalarQuantized(ScalarQuantizedIndex::new(config)), false),
+                }
+            }
+            return (AnyIndex::ScalarQuantized(ScalarQuantizedIndex::new(config)), false);
+        }
         match config.index_type {
             IndexType::IVF => {
                 let path = data_dir.join(format!("{name}.ivf.json"));
@@ -164,6 +196,7 @@ impl AnyIndex {
         match self {
             AnyIndex::Hnsw(h) => h.save(&data_dir.join(format!("{name}.hnsw.json"))),
             AnyIndex::Ivf(i) => i.save(&data_dir.join(format!("{name}.ivf.json"))),
+            AnyIndex::ScalarQuantized(s) => s.save(&data_dir.join(format!("{name}.sq.json"))),
         }
     }
 }

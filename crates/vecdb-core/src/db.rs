@@ -64,6 +64,19 @@ impl Db {
         Ok(Collection { storage })
     }
 
+    /// Create a new collection whose in-memory index uses int8 scalar
+    /// quantization (~4× smaller index; on-disk vectors stay float32).
+    pub fn create_collection_quantized(
+        &self,
+        name: impl Into<String>,
+        dimension: usize,
+    ) -> Result<Collection> {
+        self.create_collection_with(
+            CollectionConfig::new(name, dimension)
+                .with_quantization(crate::types::Quantization::ScalarInt8),
+        )
+    }
+
     /// Open an existing collection. Errors with `CollectionNotFound` if absent.
     pub fn collection(&self, name: &str) -> Result<Collection> {
         if !self.collection_exists(name) {
@@ -110,7 +123,7 @@ impl Db {
         if !self.collection_exists(name) {
             return Err(VecDbError::CollectionNotFound(name.to_string()));
         }
-        for suffix in &[".db", ".wal", ".vectors", ".hnsw.json", ".ivf.json", ".sparse.json"] {
+        for suffix in &[".db", ".wal", ".vectors", ".hnsw.json", ".ivf.json", ".sq.json", ".sparse.json"] {
             let path = self.root.join(format!("{name}{suffix}"));
             if path.exists() {
                 std::fs::remove_file(&path)
