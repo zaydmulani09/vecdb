@@ -61,6 +61,41 @@ fn quantized_collection_insert_query_reopen() {
 }
 
 #[test]
+fn binary_collection_persists_and_is_stable_across_reopen() {
+    // Binary (1-bit) mode is coarse, so we assert wiring + persistence + result
+    // stability, not recall. Recall/rerank numbers live in the benchmark.
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("b.vecdb");
+    let d = 16;
+    let n = 400;
+
+    let mut before_top: Vec<(usize, String)> = Vec::new();
+    {
+        let db = Db::open(&path).unwrap();
+        let mut c = db.create_collection_binary("docs", d).unwrap();
+        for i in 0..n {
+            c.insert(format!("doc{i}"), vec_for(i, d), json!({ "i": i }))
+                .unwrap();
+        }
+        assert_eq!(c.len().unwrap(), n);
+        for i in (0..n).step_by(37) {
+            let hits = c.query(&vec_for(i, d), 1).unwrap();
+            assert!(!hits.is_empty());
+            before_top.push((i, hits[0].id.clone()));
+        }
+        c.flush().unwrap();
+    }
+
+    let db = Db::open(&path).unwrap();
+    let c = db.collection("docs").unwrap();
+    assert_eq!(c.len().unwrap(), n, "binary vectors must survive reopen");
+    for (i, top_id) in &before_top {
+        let hits = c.query(&vec_for(*i, d), 1).unwrap();
+        assert_eq!(&hits[0].id, top_id, "binary top-1 for query {i} changed across reopen");
+    }
+}
+
+#[test]
 fn default_mode_is_unquantized_and_still_works() {
     // Same data through the default (float32) path — Phase 1 behavior intact.
     let dir = tempfile::tempdir().unwrap();

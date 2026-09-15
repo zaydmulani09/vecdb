@@ -24,6 +24,10 @@ is estimated.
     quantization loss** (same flat algorithm, only precision differs).
   - `int8-flat` — the `Quantization::ScalarInt8` index: per-dimension asymmetric
     int8 codes, flat scan with a precomputed-norm dot kernel.
+  - `binary-flat` — the `Quantization::Binary` index: 1 bit/dim (per-dim
+    mean threshold), Hamming distance via popcount.
+  - `binary+rerank` — binary-Hamming to fetch the top 100 candidates, then an
+    exact float32 L2 rerank of those down to top-10 (the intended BQ pipeline).
   - `f32-hnsw` — the default HNSW mode, for production context (approximate).
 - **Index bytes:** resident vector-store bytes. `f32` = `N·D·4`; `int8` = codes
   (`N·D·1`) + per-vector ‖x‖² cache (`N·4`) + per-dim params. HNSW additionally
@@ -37,18 +41,39 @@ is estimated.
 
 ```
 mode              recall@10      index bytes      mean µs     p50 µs     p99 µs
-f32-flat             1.0000          5120000       1289.3       1107       2352
-int8-flat            0.9900          1321024       2286.7       1864       6059
-f32-hnsw             0.9990          5120000        883.4        850       1809
+f32-flat             1.0000          5120000       2571.8       2797       5050
+int8-flat            0.9900          1321024       2996.1       2313       6776
+binary-flat          0.3340           160512       1060.8        885       2874
+binary+rerank        0.7620           160512        936.7        819       2021
+f32-hnsw             0.9990          5120000        707.1        705       1129
 ```
 
-## Quantization deltas (int8-flat vs f32-flat, same algorithm)
+_Single-run timings on a busy laptop vary run-to-run (f32-flat mean measured
+1289–2572 µs across runs); treat latency as order-of-magnitude, not precise.
+Recall and memory are deterministic. Phase 4 pins down latency with warmup +
+repeated trials on a quiet machine._
+
+## int8 deltas (int8-flat vs f32-flat, same algorithm)
 
 | Dimension | f32-flat | int8-flat | Delta |
 |-----------|----------|-----------|-------|
 | Memory (index bytes) | 5,120,000 | 1,321,024 | **3.88× smaller** |
 | Recall@10 | 1.0000 | 0.9900 | **−0.0100 (1.0% loss)** |
-| Latency (mean µs/query) | 1289 | 2287 | **1.77× slower** |
+| Latency (mean µs/query) | ~1300–2600 | ~2300–3000 | **~1.2–1.8× slower** |
+
+## binary (1-bit) deltas vs f32-flat
+
+| Dimension | f32-flat | binary-flat | binary+rerank |
+|-----------|----------|-------------|---------------|
+| Memory (index bytes) | 5,120,000 | 160,512 (**31.9× smaller**) | 160,512 |
+| Recall@10 | 1.0000 | **0.334** | **0.762** |
+| Latency (mean µs/query) | ~1300–2600 | ~1060 | ~940 (incl. rerank) |
+
+Binary alone is a coarse ~32× filter (recall 0.33); a full-precision rerank of
+the top-100 Hamming candidates recovers recall to 0.76 at k=10 while keeping the
+tiny index. Rerank uses the on-disk float32 vectors, so the stored index stays
+32× smaller. Mean-threshold binary is the simplest scheme — random-rotation
+variants (e.g. RaBitQ) would push recall higher; not implemented.
 
 ## Where int8 loses (honest)
 
@@ -67,11 +92,15 @@ f32-hnsw             0.9990          5120000        883.4        850       1809
 
 ## Takeaway
 
-int8 scalar quantization delivers a real **~4× smaller in-memory index at ~1%
-recall loss** on SIFT10K — the memory reduction that lets more vectors fit in
-RAM, which is the point of quantization. It is **not** a speed win at this scale;
-the latency crossover is a larger-N question deferred to Phase 4. The mode is
-opt-in per collection and does not change the default float32 path.
+- **int8:** ~4× smaller in-memory index at ~1% recall loss on SIFT10K — the
+  memory reduction that lets more vectors fit in RAM. Not a speed win at this
+  cache-resident scale; latency crossover deferred to Phase 4.
+- **binary:** ~32× smaller, but coarse (recall 0.33 raw); with a top-100 rerank
+  recall reaches 0.76 at k=10. Choose it for extreme memory pressure where a
+  rerank pass is acceptable.
+
+Both are opt-in per collection (`Quantization::{ScalarInt8, Binary}`) and leave
+the default float32 path unchanged.
 
 ## Reproduce
 

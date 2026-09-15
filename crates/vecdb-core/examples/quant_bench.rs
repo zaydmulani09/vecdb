@@ -17,7 +17,9 @@ use std::io::{Read, Result as IoResult};
 use std::path::Path;
 use std::time::Instant;
 
-use vecdb_core::index::{HnswIndex, IndexBackend, ScalarQuantizedIndex};
+use vecdb_core::index::{
+    BinaryQuantizedIndex, HnswIndex, IndexBackend, ScalarQuantizedIndex,
+};
 use vecdb_core::types::{CollectionConfig, DistanceMetric, Quantization};
 
 fn read_fvecs(path: &Path) -> IoResult<(Vec<Vec<f32>>, usize)> {
@@ -126,6 +128,37 @@ fn f32_flat_queries(
     (results, lat)
 }
 
+/// Binary-Hamming candidate generation + full-precision rerank: fetch the top
+/// `r` by Hamming from `idx`, then re-order those candidates by exact L2 over
+/// the original float vectors and keep the top `k`.
+fn bq_rerank_queries(
+    idx: &dyn IndexBackend,
+    base: &[Vec<f32>],
+    queries: &[Vec<f32>],
+    k: usize,
+    r: usize,
+) -> (Vec<Vec<String>>, Vec<u128>) {
+    let mut results = Vec::with_capacity(queries.len());
+    let mut lat = Vec::with_capacity(queries.len());
+    for q in queries {
+        let t = Instant::now();
+        let cand = idx.search(q, r).unwrap();
+        let mut rescored: Vec<(usize, f32)> = cand
+            .iter()
+            .map(|(id, _)| {
+                let i: usize = id.parse().unwrap();
+                let d: f32 = q.iter().zip(&base[i]).map(|(a, b)| (a - b) * (a - b)).sum();
+                (i, d)
+            })
+            .collect();
+        rescored.sort_unstable_by(|a, b| a.1.partial_cmp(&b.1).unwrap());
+        rescored.truncate(k);
+        lat.push(t.elapsed().as_micros());
+        results.push(rescored.into_iter().map(|(i, _)| i.to_string()).collect());
+    }
+    (results, lat)
+}
+
 struct Row {
     name: &'static str,
     recall10: f64,
@@ -195,6 +228,19 @@ fn main() {
     let (flat_res, mut flat_lat) = f32_flat_queries(&base, &queries, k);
     let row_flat = summarize("f32-flat", &flat_res, &mut flat_lat, &gt, f32_mem);
 
+    // ── binary (1-bit) flat, raw Hamming ─────────────────────────────────
+    let mut bq = BinaryQuantizedIndex::new(&cfg);
+    let t = Instant::now();
+    bq.build(data.clone()).unwrap();
+    let bq_build = t.elapsed();
+    let bq_mem = bq.code_bytes();
+    let (bq_res, mut bq_lat) = run_queries(&bq, &queries, k);
+    let row_bq = summarize("binary-flat", &bq_res, &mut bq_lat, &gt, bq_mem);
+
+    // ── binary + full-precision rerank (top-100 Hamming → exact L2) ──────
+    let (bqr_res, mut bqr_lat) = bq_rerank_queries(&bq, &base, &queries, k, 100);
+    let row_bqr = summarize("binary+rerank", &bqr_res, &mut bqr_lat, &gt, bq_mem);
+
     // ── HNSW f32 (production default, approximate) for context ───────────
     let mut hnsw = HnswIndex::from_collection_config(&cfg);
     let t = Instant::now();
@@ -205,7 +251,7 @@ fn main() {
     // counted here — report the f32 vector bytes as a floor.
     let row_hnsw = summarize("f32-hnsw", &hnsw_res, &mut hnsw_lat, &gt, f32_mem);
 
-    let rows = [row_flat, row_sq, row_hnsw];
+    let rows = [row_flat, row_sq, row_bq, row_bqr, row_hnsw];
 
     println!(
         "{:<16} {:>10} {:>16} {:>12} {:>10} {:>10}",
@@ -234,6 +280,22 @@ fn main() {
         "  latency:  mean {:.1}µs → {:.1}µs",
         rows[0].mean_us, rows[1].mean_us
     );
-    println!("build time: int8 {:.2?}, hnsw {:.2?}", sq_build, hnsw_build);
-    let _ = Quantization::ScalarInt8;
+    println!(
+        "\nbinary (1-bit) vs f32-flat:"
+    );
+    println!(
+        "  memory:   {} → {} bytes  ({:.1}× smaller)",
+        f32_mem,
+        bq_mem,
+        f32_mem as f64 / bq_mem as f64
+    );
+    println!(
+        "  recall@10: raw {:.4}, +rerank(top100) {:.4}  (f32-flat = 1.0)",
+        rows[2].recall10, rows[3].recall10
+    );
+    println!(
+        "build time: int8 {:.2?}, binary {:.2?}, hnsw {:.2?}",
+        sq_build, bq_build, hnsw_build
+    );
+    let _ = (Quantization::ScalarInt8, Quantization::Binary);
 }
