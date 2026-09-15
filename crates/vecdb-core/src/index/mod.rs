@@ -1,9 +1,11 @@
 pub mod backend;
+pub mod binary;
 pub mod distance;
 pub mod ivf;
 pub mod scalar;
 
 pub use backend::{HnswConfig, HnswIndex, IndexBackend};
+pub use binary::{BinaryQuantizedIndex, BinaryQuantizer};
 pub use distance::{
     compute_distance, cosine_similarity, cosine_similarity_simd, dot_product, dot_product_simd,
     euclidean_distance, normalize,
@@ -22,6 +24,7 @@ pub enum AnyIndex {
     Hnsw(HnswIndex),
     Ivf(IvfIndex),
     ScalarQuantized(ScalarQuantizedIndex),
+    BinaryQuantized(BinaryQuantizedIndex),
 }
 
 impl IndexBackend for AnyIndex {
@@ -30,6 +33,7 @@ impl IndexBackend for AnyIndex {
             AnyIndex::Hnsw(h) => h.build(vectors),
             AnyIndex::Ivf(i) => i.build(vectors),
             AnyIndex::ScalarQuantized(s) => s.build(vectors),
+            AnyIndex::BinaryQuantized(b) => b.build(vectors),
         }
     }
 
@@ -38,6 +42,7 @@ impl IndexBackend for AnyIndex {
             AnyIndex::Hnsw(h) => h.insert(id, vector),
             AnyIndex::Ivf(i) => i.insert(id, vector),
             AnyIndex::ScalarQuantized(s) => s.insert(id, vector),
+            AnyIndex::BinaryQuantized(b) => b.insert(id, vector),
         }
     }
 
@@ -46,6 +51,7 @@ impl IndexBackend for AnyIndex {
             AnyIndex::Hnsw(h) => h.search(query, k),
             AnyIndex::Ivf(i) => i.search(query, k),
             AnyIndex::ScalarQuantized(s) => s.search(query, k),
+            AnyIndex::BinaryQuantized(b) => b.search(query, k),
         }
     }
 
@@ -54,6 +60,7 @@ impl IndexBackend for AnyIndex {
             AnyIndex::Hnsw(h) => h.delete(id),
             AnyIndex::Ivf(i) => i.delete(id),
             AnyIndex::ScalarQuantized(s) => s.delete(id),
+            AnyIndex::BinaryQuantized(b) => b.delete(id),
         }
     }
 
@@ -62,6 +69,7 @@ impl IndexBackend for AnyIndex {
             AnyIndex::Hnsw(h) => h.save(path),
             AnyIndex::Ivf(i) => i.save(path),
             AnyIndex::ScalarQuantized(s) => s.save(path),
+            AnyIndex::BinaryQuantized(b) => b.save(path),
         }
     }
 
@@ -81,6 +89,9 @@ impl IndexBackend for AnyIndex {
             if stem.ends_with(".sq.json") {
                 return ScalarQuantizedIndex::load_from(path, config);
             }
+            if stem.ends_with(".bq.json") {
+                return BinaryQuantizedIndex::load_from(path, config);
+            }
         }
         HnswIndex::load_from(path, config)
     }
@@ -90,6 +101,7 @@ impl IndexBackend for AnyIndex {
             AnyIndex::Hnsw(h) => h.len(),
             AnyIndex::Ivf(i) => i.len(),
             AnyIndex::ScalarQuantized(s) => s.len(),
+            AnyIndex::BinaryQuantized(b) => b.len(),
         }
     }
 
@@ -98,6 +110,7 @@ impl IndexBackend for AnyIndex {
             AnyIndex::Hnsw(h) => h.is_empty(),
             AnyIndex::Ivf(i) => i.is_empty(),
             AnyIndex::ScalarQuantized(s) => s.is_empty(),
+            AnyIndex::BinaryQuantized(b) => b.is_empty(),
         }
     }
 
@@ -106,6 +119,7 @@ impl IndexBackend for AnyIndex {
             AnyIndex::Hnsw(h) => h.index_type(),
             AnyIndex::Ivf(i) => i.index_type(),
             AnyIndex::ScalarQuantized(s) => s.index_type(),
+            AnyIndex::BinaryQuantized(b) => b.index_type(),
         }
     }
 
@@ -114,6 +128,7 @@ impl IndexBackend for AnyIndex {
             AnyIndex::Hnsw(h) => h.rebuild(vectors),
             AnyIndex::Ivf(i) => i.rebuild(vectors),
             AnyIndex::ScalarQuantized(s) => s.rebuild(vectors),
+            AnyIndex::BinaryQuantized(b) => b.rebuild(vectors),
         }
     }
 }
@@ -129,8 +144,14 @@ impl AnyIndex {
     /// regardless of `index_type` (HNSW-over-int8 is not yet implemented); the
     /// full-precision on-disk vectors remain authoritative.
     pub fn from_config(config: &CollectionConfig) -> Self {
-        if config.quantization == Quantization::ScalarInt8 {
-            return AnyIndex::ScalarQuantized(ScalarQuantizedIndex::new(config));
+        match config.quantization {
+            Quantization::ScalarInt8 => {
+                return AnyIndex::ScalarQuantized(ScalarQuantizedIndex::new(config))
+            }
+            Quantization::Binary => {
+                return AnyIndex::BinaryQuantized(BinaryQuantizedIndex::new(config))
+            }
+            Quantization::None => {}
         }
         match config.index_type {
             IndexType::IVF => AnyIndex::Ivf(IvfIndex::new(config)),
@@ -154,6 +175,16 @@ impl AnyIndex {
                 }
             }
             return (AnyIndex::ScalarQuantized(ScalarQuantizedIndex::new(config)), false);
+        }
+        if config.quantization == Quantization::Binary {
+            let path = data_dir.join(format!("{name}.bq.json"));
+            if path.exists() {
+                match BinaryQuantizedIndex::load_file(&path) {
+                    Ok(idx) => return (AnyIndex::BinaryQuantized(idx), true),
+                    Err(_) => return (AnyIndex::BinaryQuantized(BinaryQuantizedIndex::new(config)), false),
+                }
+            }
+            return (AnyIndex::BinaryQuantized(BinaryQuantizedIndex::new(config)), false);
         }
         match config.index_type {
             IndexType::IVF => {
@@ -197,6 +228,7 @@ impl AnyIndex {
             AnyIndex::Hnsw(h) => h.save(&data_dir.join(format!("{name}.hnsw.json"))),
             AnyIndex::Ivf(i) => i.save(&data_dir.join(format!("{name}.ivf.json"))),
             AnyIndex::ScalarQuantized(s) => s.save(&data_dir.join(format!("{name}.sq.json"))),
+            AnyIndex::BinaryQuantized(b) => b.save(&data_dir.join(format!("{name}.bq.json"))),
         }
     }
 }

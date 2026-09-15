@@ -76,6 +76,7 @@ impl CollectionManager {
             ".hnsw.json",
             ".ivf.json",
             ".sq.json",
+            ".bq.json",
             ".sparse.json",
         ] {
             let path = self.data_dir.join(format!("{name}{suffix}"));

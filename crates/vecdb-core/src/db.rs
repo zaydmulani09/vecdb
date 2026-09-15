@@ -77,6 +77,20 @@ impl Db {
         )
     }
 
+    /// Create a new collection whose in-memory index uses 1-bit binary
+    /// quantization (~32× smaller; coarse Hamming distance — best paired with a
+    /// full-precision rerank of top candidates).
+    pub fn create_collection_binary(
+        &self,
+        name: impl Into<String>,
+        dimension: usize,
+    ) -> Result<Collection> {
+        self.create_collection_with(
+            CollectionConfig::new(name, dimension)
+                .with_quantization(crate::types::Quantization::Binary),
+        )
+    }
+
     /// Open an existing collection. Errors with `CollectionNotFound` if absent.
     pub fn collection(&self, name: &str) -> Result<Collection> {
         if !self.collection_exists(name) {
@@ -123,7 +137,7 @@ impl Db {
         if !self.collection_exists(name) {
             return Err(VecDbError::CollectionNotFound(name.to_string()));
         }
-        for suffix in &[".db", ".wal", ".vectors", ".hnsw.json", ".ivf.json", ".sq.json", ".sparse.json"] {
+        for suffix in &[".db", ".wal", ".vectors", ".hnsw.json", ".ivf.json", ".sq.json", ".bq.json", ".sparse.json"] {
             let path = self.root.join(format!("{name}{suffix}"));
             if path.exists() {
                 std::fs::remove_file(&path)

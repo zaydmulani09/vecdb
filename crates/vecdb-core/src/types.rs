@@ -42,6 +42,9 @@ pub enum Quantization {
     #[default]
     None,
     ScalarInt8,
+    /// 1-bit binary quantization (~32× smaller; Hamming distance, coarse — best
+    /// paired with a full-precision rerank of top candidates).
+    Binary,
 }
 
 impl fmt::Display for Quantization {
@@ -49,6 +52,7 @@ impl fmt::Display for Quantization {
         match self {
             Quantization::None => write!(f, "none"),
             Quantization::ScalarInt8 => write!(f, "scalar_int8"),
+            Quantization::Binary => write!(f, "binary"),
         }
     }
 }
