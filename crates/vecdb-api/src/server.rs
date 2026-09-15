@@ -9,7 +9,7 @@ use tower_http::cors::CorsLayer;
 use tower_http::limit::RequestBodyLimitLayer;
 use tower_http::timeout::TimeoutLayer;
 use tower_http::trace::TraceLayer;
-use vecdb_core::ServerConfig;
+use vecdb_core::config::ServerConfig;
 
 use crate::{
     collection_manager::CollectionManager,
