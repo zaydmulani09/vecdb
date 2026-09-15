@@ -81,6 +81,12 @@ pub struct CollectionConfig {
     /// keeps collections written before this field was added loadable.
     #[serde(default)]
     pub quantization: Quantization,
+    /// Payload fields to index for fast filtered search. Each becomes a SQLite
+    /// expression index on `json_extract(payload, '$.<field>')`, so a selective
+    /// filter on that field is served from the index instead of scanning every
+    /// payload. Dotted paths (e.g. `"meta.year"`) are supported.
+    #[serde(default)]
+    pub indexed_payload_fields: Vec<String>,
     pub created_at: DateTime<Utc>,
 }
 
@@ -97,6 +103,7 @@ impl CollectionConfig {
             bm25_k1: 1.5,
             bm25_b: 0.75,
             quantization: Quantization::default(),
+            indexed_payload_fields: Vec::new(),
             created_at: Utc::now(),
         }
     }
@@ -104,6 +111,16 @@ impl CollectionConfig {
     /// Enable int8 scalar quantization for this collection's in-memory index.
     pub fn with_quantization(mut self, q: Quantization) -> Self {
         self.quantization = q;
+        self
+    }
+
+    /// Declare payload fields to index for fast filtered search.
+    pub fn with_indexed_fields<I, S>(mut self, fields: I) -> Self
+    where
+        I: IntoIterator<Item = S>,
+        S: Into<String>,
+    {
+        self.indexed_payload_fields = fields.into_iter().map(Into::into).collect();
         self
     }
 }

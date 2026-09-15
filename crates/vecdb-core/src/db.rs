@@ -213,6 +213,22 @@ impl Collection {
         self.storage.search_dense(&vector.to_vec(), k)
     }
 
+    /// Dense k-NN search restricted to records whose payload matches `filter`,
+    /// with predicate pushdown: a selective filter scans only the matching
+    /// vectors (exact, ~proportional to the matches) rather than searching the
+    /// whole index and discarding non-matches.
+    ///
+    /// `filter` is the same JSON predicate shape accepted elsewhere, e.g.
+    /// `json!({ "genre": "sci-fi" })` or `json!({ "year": { "$gte": 2000 } })`.
+    pub fn query_filtered(
+        &self,
+        vector: &[f32],
+        k: usize,
+        filter: &Value,
+    ) -> Result<Vec<SearchResult>> {
+        self.storage.search_dense_filtered(&vector.to_vec(), k, filter)
+    }
+
     /// Full-text BM25 search over the sparse index.
     pub fn query_text(&self, text: &str, k: usize) -> Result<Vec<SearchResult>> {
         self.storage.search_sparse(text, k)

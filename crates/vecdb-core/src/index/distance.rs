@@ -167,6 +167,16 @@ pub fn compute_distance(a: &[f32], b: &[f32], metric: &DistanceMetric) -> f32 {
     }
 }
 
+/// Convert a `compute_distance` value into a similarity score in which higher is
+/// better (the ranking/hydration convention used across all index backends).
+pub fn to_score(dist: f32, metric: &DistanceMetric) -> f32 {
+    match metric {
+        DistanceMetric::Cosine => 1.0 - dist,
+        DistanceMetric::Euclidean => 1.0 / (1.0 + dist),
+        DistanceMetric::DotProduct => 1.0 - dist,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
