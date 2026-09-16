@@ -105,12 +105,16 @@ system      recall@10  build s        qps    p50 µs   p99 µs   mem MB  disk MB
 vecdb        0.9805     11554.3 (3.2h)  95    10288    18685     571     1301
 qdrant       0.9952       211.4        293     2890     9886     852     1096
 chroma       0.9747      5528.2 (92m)   41    23037    39875    1208       —
-pgvector     — did not complete on the Neon free tier during the 1M load —
+pgvector     — N/A: Neon free-tier 512 MB storage cap hit during load —
 ```
 
 - vecdb build **11,554 s ≈ 3.2 hours** vs qdrant **211 s** — **~55× slower**.
-- pgvector: the 1M load exceeded the free managed instance's limits (its 100k
-  numbers above stand; the exact failure phase is recorded in the harness).
+- pgvector could not be measured at 1M: the COPY failed with
+  `could not extend file because project size limit (512 MB) has been exceeded`
+  (SQLSTATE 53100). This is the **free managed tier's storage cap**, not a
+  pgvector engine limit — 1M × 128-dim vectors (~0.6 GB) plus an HNSW index
+  exceeds 512 MB. pgvector's 100k row stands; a larger instance would be needed
+  to measure it at 1M. Not softened, but attributed accurately.
 - Same fairness caveats as the 100k table: pgvector latency is server-side;
   vecdb pays no HTTP while qdrant/chroma do.
 
