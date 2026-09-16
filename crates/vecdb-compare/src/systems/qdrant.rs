@@ -59,7 +59,9 @@ async fn run_async(b: &Bench) -> Result<Row, String> {
             return Err(format!("upsert failed: {}", resp.text().await.unwrap_or_default()));
         }
     }
-    // Wait for the optimizer to finish indexing all vectors.
+    // Wait for the optimizer to finish indexing all vectors (bounded, so a
+    // background run can't hang if the count plateaus below N).
+    let wait_start = Instant::now();
     loop {
         let info: serde_json::Value = http
             .get(format!("{BASE}/collections/{COLLECTION}"))
@@ -73,6 +75,13 @@ async fn run_async(b: &Bench) -> Result<Row, String> {
         let status = res["status"].as_str().unwrap_or("");
         let indexed = res["indexed_vectors_count"].as_u64().unwrap_or(0);
         if status == "green" && indexed as usize >= b.base.len() {
+            break;
+        }
+        if wait_start.elapsed().as_secs() > 600 {
+            eprintln!(
+                "  (qdrant) indexing wait timed out: status={status}, indexed={indexed}/{}",
+                b.base.len()
+            );
             break;
         }
         tokio::time::sleep(Duration::from_millis(500)).await;

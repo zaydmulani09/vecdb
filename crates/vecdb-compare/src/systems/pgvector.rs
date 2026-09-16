@@ -105,16 +105,18 @@ async fn run_async(b: &Bench, conn_str: &str) -> Result<Row, String> {
 
     // ── Query sweep: ids from the real query (recall), latency from
     //    server-side EXPLAIN ANALYZE execution time (excludes RTT) ──
-    let sel = client
-        .prepare("SELECT id FROM items ORDER BY emb <-> $1::vector LIMIT $2")
-        .await
-        .map_err(|e| e.to_string())?;
     let mut results = Vec::with_capacity(b.queries.len());
     let mut lat = Vec::with_capacity(b.queries.len());
     for q in &b.queries {
         let lit = vec_literal(q);
+        // Inline the vector literal (postgres infers a bound $1 as `vector`,
+        // which a Rust String won't serialize as). Values are our own floats.
+        let sel_sql = format!(
+            "SELECT id FROM items ORDER BY emb <-> '{lit}'::vector LIMIT {}",
+            b.k
+        );
         let rows = client
-            .query(&sel, &[&lit, &(b.k as i64)])
+            .query(sel_sql.as_str(), &[])
             .await
             .map_err(|e| e.to_string())?;
         results.push(rows.iter().map(|r| r.get::<_, i32>(0).to_string()).collect::<Vec<_>>());
