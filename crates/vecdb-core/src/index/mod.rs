@@ -8,7 +8,7 @@ pub use backend::{HnswConfig, HnswIndex, IndexBackend};
 pub use binary::{BinaryQuantizedIndex, BinaryQuantizer};
 pub use distance::{
     compute_distance, cosine_similarity, cosine_similarity_simd, dot_product, dot_product_simd,
-    euclidean_distance, normalize, to_score,
+    euclidean_distance, euclidean_distance_simd, normalize, to_score,
 };
 pub use ivf::IvfIndex;
 pub use scalar::{ScalarQuantizedIndex, ScalarQuantizer};

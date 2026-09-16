@@ -156,13 +156,56 @@ pub fn cosine_similarity_simd(a: &[f32], b: &[f32]) -> f32 {
     dot / (mag_a * mag_b)
 }
 
-/// Dispatch distance computation based on `metric`.
+/// Euclidean (L2) distance using 8-element loop unrolling.
 ///
-/// Uses SIMD-unrolled kernels for Cosine and DotProduct; scalar for Euclidean.
+/// Eight independent squared-difference accumulators give LLVM the structure to
+/// vectorize (SSE at the baseline target, AVX with `-C target-cpu=native`).
+/// This is the hot inner loop of HNSW construction and search for the Euclidean
+/// metric, so speeding it up speeds both index build and query. Falls back to
+/// the scalar path for `n < 8`.
+pub fn euclidean_distance_simd(a: &[f32], b: &[f32]) -> f32 {
+    let n = a.len().min(b.len());
+    if n < 8 {
+        return euclidean_distance(&a[..n], &b[..n]);
+    }
+    let chunks = n / 8;
+    let rem = n % 8;
+    let (mut s0, mut s1, mut s2, mut s3) = (0.0f32, 0.0f32, 0.0f32, 0.0f32);
+    let (mut s4, mut s5, mut s6, mut s7) = (0.0f32, 0.0f32, 0.0f32, 0.0f32);
+    for i in 0..chunks {
+        let base = i * 8;
+        let d0 = a[base] - b[base];
+        let d1 = a[base + 1] - b[base + 1];
+        let d2 = a[base + 2] - b[base + 2];
+        let d3 = a[base + 3] - b[base + 3];
+        let d4 = a[base + 4] - b[base + 4];
+        let d5 = a[base + 5] - b[base + 5];
+        let d6 = a[base + 6] - b[base + 6];
+        let d7 = a[base + 7] - b[base + 7];
+        s0 += d0 * d0;
+        s1 += d1 * d1;
+        s2 += d2 * d2;
+        s3 += d3 * d3;
+        s4 += d4 * d4;
+        s5 += d5 * d5;
+        s6 += d6 * d6;
+        s7 += d7 * d7;
+    }
+    let mut acc = s0 + s1 + s2 + s3 + s4 + s5 + s6 + s7;
+    let start = chunks * 8;
+    for i in 0..rem {
+        let d = a[start + i] - b[start + i];
+        acc += d * d;
+    }
+    acc.sqrt()
+}
+
+/// Dispatch distance computation based on `metric`. All three metrics use
+/// SIMD-unrolled kernels.
 pub fn compute_distance(a: &[f32], b: &[f32], metric: &DistanceMetric) -> f32 {
     match metric {
         DistanceMetric::Cosine => 1.0 - cosine_similarity_simd(a, b),
-        DistanceMetric::Euclidean => euclidean_distance(a, b),
+        DistanceMetric::Euclidean => euclidean_distance_simd(a, b),
         DistanceMetric::DotProduct => 1.0 - dot_product_simd(a, b),
     }
 }
@@ -216,6 +259,21 @@ mod tests {
         let b = vec![3.0f32, 4.0];
         let d = euclidean_distance(&a, &b);
         assert!((d - 5.0).abs() < 1e-6);
+    }
+
+    #[test]
+    fn test_euclidean_simd_matches_scalar() {
+        // Parity across the 8-lane boundary and a remainder tail (dim 130).
+        let a: Vec<f32> = (0..130).map(|i| (i as f32) * 0.3 - 7.0).collect();
+        let b: Vec<f32> = (0..130).map(|i| (i as f32).sin() * 5.0).collect();
+        let s = euclidean_distance(&a, &b);
+        let v = euclidean_distance_simd(&a, &b);
+        assert!((s - v).abs() < 1e-2, "scalar {s} vs simd {v}");
+        // Short path (< 8) must fall back and agree exactly.
+        assert_eq!(
+            euclidean_distance(&a[..5], &b[..5]),
+            euclidean_distance_simd(&a[..5], &b[..5])
+        );
     }
 
     #[test]
