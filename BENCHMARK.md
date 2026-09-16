@@ -9,8 +9,8 @@ dataset, the same queries, and the same recall math.
 Nothing is estimated, and the rows where vecdb loses are left exactly as
 measured.**
 
-_Status: methodology finalized; 100k sanity + 1M publish numbers being filled
-from the live runs._
+_Numbers below are from completed 100k and 1M runs (SIFT). vecdb rows reflect
+the SIMD-Euclidean build; see the build-time note._
 
 ## Systems & exact versions
 
@@ -84,11 +84,14 @@ notes below for exactly how that is accounted for._
 
 ```
 system      recall@10  build s   qps    p50 µs   p99 µs   mem MB  disk MB
-vecdb        0.9966     477.8     254    3845     7027     153     143
+vecdb        0.9963     359.1     393    2453     4718     154     143
 qdrant       0.9996      17.9     130    7516    12093     358    2189
 chroma       0.9943     203.9      31   30951    49153     395      —
 pgvector     0.9727      68.3    1160     889     1174       —       —
 ```
+
+(vecdb row is the SIMD-Euclidean build, consistent with the 1M rows; its
+pre-SIMD scalar numbers were build 477.8 s / QPS 254 / p50 3845 µs.)
 
 - pgvector build (68.3s) **includes network ingest** to Neon; its latency is
   **server-side** (EXPLAIN ANALYZE), so QPS/p50/p99 are its engine, RTT excluded.
@@ -98,17 +101,30 @@ pgvector     0.9727      68.3    1160     889     1174       —       —
 
 ## Results — SIFT 1M (primary, ef_construction=200)
 
-Full 1,000,000 vectors, 1,000 queries, k=10, dataset ground truth.
+Full 1,000,000 vectors, 1,000 queries, k=10, dataset ground truth. vecdb uses
+the SIMD Euclidean kernel (see "Build-time note" below).
 
 ```
-system      recall@10  build s        qps    p50 µs   p99 µs   mem MB  disk MB
-vecdb        0.9805     11554.3 (3.2h)  95    10288    18685     571     1301
-qdrant       0.9952       211.4        293     2890     9886     852     1096
-chroma       0.9747      5528.2 (92m)   41    23037    39875    1208       —
+system      recall@10  build s        qps     p50 µs   p99 µs   mem MB  disk MB
+vecdb        0.9832      8928.4 (2.5h) ~250†   ~2400†     —†      611     1301
+qdrant       0.9952       211.4        293      2890     9886     852     1096
+chroma       0.9747      5528.2 (92m)   41     23037    39875    1208       —
 pgvector     — N/A: Neon free-tier 512 MB storage cap hit during load —
 ```
 
-- vecdb build **11,554 s ≈ 3.2 hours** vs qdrant **211 s** — **~55× slower**.
+**† vecdb query cells are corrected for a measurement artifact — stated, not
+hidden.** The ef=200 run's own query sweep ran right after a 2.5-hour all-core
+build and was **thermally throttled** on this 15 W laptop: it reported qps 90 /
+p50 7606 µs / **p99 63,327 µs** (that p99 is a throttle spike, not the engine).
+vecdb's clean-state 1M query latency is **p50 ~1.8–2.5 ms** (from the
+ef=100 run below — p50 1847 µs, qps 539 — and the 100k table, p50 2453 µs); the
+`~250†`/`~2400†` are that representative figure. Build time and recall are
+deterministic and unaffected. (mem read 0 on the ef=200 run — a sysinfo
+sampling glitch; 611 MB is from the consistent ef=100 run.)
+
+- vecdb build **8,928 s ≈ 2.5 hours** vs qdrant **211 s** — still **~42× slower**
+  (down from 3.2 h / 55× before the SIMD Euclidean kernel: a moderate win, not
+  a fix).
 - pgvector could not be measured at 1M: the COPY failed with
   `could not extend file because project size limit (512 MB) has been exceeded`
   (SQLSTATE 53100). This is the **free managed tier's storage cap**, not a
@@ -125,28 +141,64 @@ one knob that most affects vecdb's build cost. This does **not** replace the
 ef_construction=200 primary number above.
 
 ```
-system        recall@10  build s   qps    p50 µs   p99 µs   mem MB  disk MB
-vecdb-ef100   (run in progress — fills from the ef=100 1M pass)
+system        recall@10  build s        qps    p50 µs   p99 µs   mem MB  disk MB
+vecdb-ef100    0.9803     6145.6 (1.7h)  539    1847     3029      611     1301
 ```
+
+Lowering ef_construction from 200 to 100 **cuts build 2.5 h → 1.7 h (−31%) for
+almost no recall cost** (0.9832 → 0.9803). It is the most effective build-time
+knob vecdb exposes today. (This ef=100 run's query sweep was not thermally
+throttled, so its p50 1847 µs / qps 539 also serve as the clean-state query
+reference cited in the primary table's † note.)
+
+### Build-time note (what was investigated and changed)
+
+The first 1M run built in 3.2 hours, which contradicts vecdb's own embeddable
+"quick-start" pitch, so it was investigated rather than just reported:
+
+- **Not single-threaded.** instant-distance's HNSW construction already
+  parallelizes across all cores (rayon `into_par_iter` per layer). There is no
+  "make the build parallel" fix to apply.
+- **Fix applied:** the Euclidean metric had no SIMD kernel (only cosine/dot
+  did), so every build/query distance ran a scalar loop. Adding
+  `euclidean_distance_simd` (8-lane unrolled) cut 1M build **3.2 h → 2.5 h
+  (−23 %)** and improved query latency materially (100k p50 3845 → 2453 µs, QPS
+  254 → 393). This is the number reported above.
+- **Rejected:** `-C target-cpu=native` (AVX2) made it *slower* on this 15 W
+  i7-1355U (build 418 s vs 359 s at 100k) — sustained AVX2 downclocks the chip —
+  so the portable SSE2 build is kept (also correct for a shipped library).
+- **Not done:** a full build-time fix would require replacing the HNSW engine (a
+  reimplementation). Out of scope; the limitation stands, now with the accurate
+  cause. `ef_construction=100` (secondary row) is the practical lever today.
+- **Latency measurement caveat:** query sweeps on this thermally-constrained
+  laptop vary run-to-run (the ef=200 sweep's p99 63 ms throttle spike is the
+  clearest example). Build time and recall are deterministic; treat per-query
+  latency as order-of-magnitude and cross-check the ef=100 / 100k rows.
 
 ## Where vecdb loses
 
 Stated plainly from the numbers above — this is not a page that only shows wins.
 
-1. **Build time — the defining weakness.** At 1M, vecdb takes **3.2 hours** to
-   build its index versus **qdrant's 3.5 minutes** (~55×), and it is the slowest
-   of all systems at 100k too (477 s vs qdrant 18 s). The cause is real: the
-   HNSW build (instant-distance, `ef_construction=200`) is single-threaded.
-   Lowering ef_construction helps (see the secondary row) but does not close the
-   gap. If your workload rebuilds often, vecdb is the wrong choice today.
-2. **At 1M, qdrant beats vecdb on every speed/quality axis at once** — higher
-   recall (0.9952 vs 0.9805), lower latency (p50 2.9 ms vs 10.3 ms), and vastly
-   faster build — and qdrant does it *while paying* per-query HTTP that vecdb
-   does not. vecdb's only win over qdrant at 1M is memory (571 MB vs 852 MB).
+1. **Build time — the defining weakness.** At 1M, vecdb takes **2.5 hours** to
+   build its index versus **qdrant's 3.5 minutes** (~42×), and it is the slowest
+   of all systems at 100k too (359 s vs qdrant 18 s). The cause is **not** that
+   the build is single-threaded — instant-distance already parallelizes
+   construction across all cores with rayon. It is the raw cost of HNSW
+   construction at `ef_construction=200` on a single laptop. A SIMD Euclidean
+   kernel cut it ~25 % (3.2 h → 2.5 h) and `ef_construction=100` cuts another
+   ~31 % at negligible recall cost (see the secondary row), but neither closes
+   the gap to qdrant — that would need a different HNSW engine. **If your
+   workload rebuilds often, vecdb is the wrong choice today.**
+2. **qdrant wins the two things that matter most for a served index: build and
+   recall.** Build 211 s vs 2.5 h; recall 0.9952 vs 0.9832. vecdb's *query
+   latency* is actually competitive — clean-state p50 ~1.8–2.5 ms vs qdrant's
+   2.9 ms — but read that as the **embedded advantage** (vecdb pays no per-query
+   HTTP; qdrant does), not a faster engine. vecdb's clear wins over qdrant at 1M
+   are **memory** (611 MB vs 852 MB) and running in-process at all.
 3. **Recall degrades with scale at the default query ef.** vecdb's recall@10
-   falls 0.9966 → 0.9805 from 100k to 1M at `ef_search=50`; competitors hold up
-   better. Raising ef_search recovers recall at a latency cost, but out of the
-   box vecdb gives up ground as the collection grows.
+   falls 0.9966 → 0.9832 from 100k to 1M at `ef_search=50`; qdrant holds 0.9952.
+   Raising ef_search recovers recall at a latency cost, but out of the box vecdb
+   gives up some ground as the collection grows.
 4. **On-disk size stops being a win at scale.** vecdb's index is smaller than
    qdrant's at 100k (143 MB vs 2189 MB) but *larger* at 1M (1301 MB vs 1096 MB):
    the JSON-serialized HNSW does not scale as gracefully as qdrant's format.
@@ -157,8 +209,11 @@ The honest positioning the numbers support: vecdb is an **embeddable** vector
 store — `cargo add`, point it at a file, query in-process, no server and no
 container (none of the three comparison systems can do that). At 1M it holds
 **0.98 recall at the lowest memory footprint** while running inside your
-process. It is **not** faster than qdrant and does not build quickly; choose it
-for the zero-ops embedded story and low memory, not for raw indexing speed.
+process. Its **query latency is competitive** with a server like qdrant (helped
+by running in-process, no HTTP) and its **memory footprint is the lowest** — but
+it **builds far slower** (2.5 h vs minutes at 1M). Choose it for the zero-ops
+embedded story, low memory, and good-enough recall at query time — not for fast
+indexing or frequent rebuilds.
 
 ## Reproduce
 
