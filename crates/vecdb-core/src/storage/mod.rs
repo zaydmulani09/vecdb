@@ -167,6 +167,54 @@ impl Storage {
         Ok(result)
     }
 
+    /// Bulk-insert new records efficiently: append all vectors, write the WAL in
+    /// one batched fsync, insert metadata in one transaction, then build the
+    /// dense (and sparse) index once — instead of the per-insert index rebuilds
+    /// `upsert` triggers. Intended for loading a fresh/large collection.
+    ///
+    /// Assumes the ids are new (uses append semantics). A final checkpoint
+    /// truncates the WAL, since the data is durable in the vector store, the
+    /// metadata db, and the saved index.
+    pub fn bulk_upsert(&mut self, records: Vec<VectorRecord>) -> Result<usize> {
+        for r in &records {
+            if r.vector.len() != self.config.dimension {
+                return Err(VecDbError::DimensionMismatch {
+                    expected: self.config.dimension,
+                    got: r.vector.len(),
+                });
+            }
+        }
+
+        let mut wal_entries = Vec::with_capacity(records.len());
+        let mut items: Vec<(String, usize, VectorRecord)> = Vec::with_capacity(records.len());
+        for record in records {
+            let id = record.id.clone();
+            let mmap_index = self.vectors.append(&record.vector)?;
+            wal_entries.push(WalEntry::Insert {
+                id: id.clone(),
+                mmap_index,
+                record: record.clone(),
+            });
+            items.push((id, mmap_index, record));
+        }
+
+        self.wal.append_batch(&wal_entries)?;
+        drop(wal_entries);
+
+        let refs: Vec<(String, usize, &VectorRecord)> =
+            items.iter().map(|(id, idx, rec)| (id.clone(), *idx, rec)).collect();
+        self.metadata.upsert_batch(&refs)?;
+        drop(refs);
+        let count = items.len();
+        drop(items);
+
+        // Build the dense + sparse indexes once from all active records.
+        self.rebuild_index()?;
+        // Data is durable in mmap + metadata; collapse the WAL.
+        self.checkpoint()?;
+        Ok(count)
+    }
+
     pub fn delete(&mut self, id: &VectorId) -> Result<()> {
         self.wal.append(&WalEntry::Delete { id: id.clone() })?;
         self.metadata.delete(id)?;

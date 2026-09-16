@@ -203,6 +203,28 @@ impl Collection {
         self.storage.upsert(record)
     }
 
+    /// Bulk-insert many `(id, vector, payload)` triples, building the index once
+    /// at the end. Far faster than repeated [`Collection::insert`] for loading a
+    /// large collection. Returns the number inserted.
+    pub fn insert_batch(
+        &mut self,
+        items: Vec<(VectorId, Vector, Value)>,
+    ) -> Result<usize> {
+        let now = Utc::now();
+        let records = items
+            .into_iter()
+            .map(|(id, vector, payload)| VectorRecord {
+                id,
+                vector,
+                payload,
+                text: None,
+                created_at: now,
+                updated_at: now,
+            })
+            .collect();
+        self.storage.bulk_upsert(records)
+    }
+
     /// Delete a record by id.
     pub fn delete(&mut self, id: &str) -> Result<()> {
         self.storage.delete(&id.to_string())

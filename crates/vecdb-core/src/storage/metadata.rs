@@ -100,6 +100,27 @@ impl MetadataStore {
         Ok(())
     }
 
+    /// Insert/replace many records in a single transaction (bulk load).
+    pub fn upsert_batch(&self, items: &[(String, usize, &VectorRecord)]) -> Result<()> {
+        let mut conn = self.conn()?;
+        let now = now_unix();
+        let tx = conn.transaction()?;
+        {
+            let mut stmt = tx.prepare(
+                "INSERT OR REPLACE INTO vectors \
+                 (id, mmap_index, payload, text, created_at, updated_at, deleted) \
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, 0)",
+            )?;
+            for (id, mmap_index, record) in items {
+                let payload = serde_json::to_string(&record.payload)
+                    .map_err(|e| VecDbError::SerializationError(e.to_string()))?;
+                stmt.execute(params![id, *mmap_index as i64, payload, record.text, now, now])?;
+            }
+        }
+        tx.commit()?;
+        Ok(())
+    }
+
     pub fn get(&self, id: &str) -> Result<(usize, VectorRecord)> {
         let conn = self.conn()?;
         let row = conn.query_row(
