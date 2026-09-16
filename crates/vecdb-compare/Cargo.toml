@@ -1,0 +1,22 @@
+[package]
+name = "vecdb-compare"
+version = "0.1.0"
+edition = "2021"
+publish = false
+description = "Phase 4 benchmark harness: vecdb (embedded) vs qdrant/chroma/pgvector on the same dataset and queries."
+
+[[bin]]
+name = "vecdb-compare"
+path = "src/main.rs"
+
+[dependencies]
+vecdb-core = { path = "../vecdb-core" }
+serde = { workspace = true }
+serde_json = { workspace = true }
+# HTTP clients for qdrant / chroma (rustls, no OpenSSL).
+reqwest = { workspace = true }
+tokio = { workspace = true }
+# pgvector over plain postgres (no TLS needed for a local container).
+tokio-postgres = "0.7"
+sysinfo = "0.32"
+rayon = { workspace = true }

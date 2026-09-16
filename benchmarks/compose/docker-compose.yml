@@ -1,0 +1,45 @@
+# Competitor vector databases for the Phase 4 comparison.
+#
+# vecdb itself is NOT here — it runs embedded, in-process, with no container.
+# That asymmetry is the point of the comparison, so these three are the only
+# services.
+#
+# Versions are pinned. The exact image digests actually pulled on the benchmark
+# machine are recorded in BENCHMARK.md at run time (never hand-written here).
+#
+#   docker compose -f benchmarks/compose/docker-compose.yml up -d
+#   # ... run the harness ...
+#   docker compose -f benchmarks/compose/docker-compose.yml down -v
+
+services:
+  qdrant:
+    image: qdrant/qdrant:v1.12.4
+    ports:
+      - "6334:6333"   # REST (host 6334 to avoid clashing with vecdb-api's 6333)
+      - "6335:6334"   # gRPC
+    # Bounded so memory-footprint numbers are comparable and honest.
+    deploy:
+      resources:
+        limits:
+          memory: 4g
+
+  chroma:
+    image: chromadb/chroma:0.5.20
+    ports:
+      - "8000:8000"
+    deploy:
+      resources:
+        limits:
+          memory: 4g
+
+  pgvector:
+    image: pgvector/pgvector:pg17
+    environment:
+      POSTGRES_PASSWORD: bench
+      POSTGRES_DB: bench
+    ports:
+      - "5433:5432"   # host 5433 to avoid clashing with a local postgres
+    deploy:
+      resources:
+        limits:
+          memory: 4g
