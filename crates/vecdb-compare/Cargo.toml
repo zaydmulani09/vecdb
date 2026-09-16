@@ -20,3 +20,5 @@ tokio = { workspace = true }
 tokio-postgres = "0.7"
 sysinfo = "0.32"
 rayon = { workspace = true }
+futures-util = "0.3"
+bytes = "1"
