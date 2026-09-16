@@ -21,7 +21,7 @@ services:
     deploy:
       resources:
         limits:
-          memory: 4g
+          memory: 2g
 
   chroma:
     image: chromadb/chroma:0.5.20
@@ -30,7 +30,7 @@ services:
     deploy:
       resources:
         limits:
-          memory: 4g
+          memory: 2g
 
   pgvector:
     image: pgvector/pgvector:pg17
@@ -42,4 +42,4 @@ services:
     deploy:
       resources:
         limits:
-          memory: 4g
+          memory: 2g
