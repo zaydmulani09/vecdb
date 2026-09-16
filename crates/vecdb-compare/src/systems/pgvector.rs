@@ -1,24 +1,33 @@
-//! pgvector adapter — postgres + pgvector in the compose container (port 5433).
+//! pgvector adapter — managed Postgres (Neon) with pgvector.
+//!
+//! No local Postgres/compile on this box, so pgvector runs on a free managed
+//! instance. Connection string comes from env `PGVECTOR_CONN` (libpq form, e.g.
+//! `host=... user=... password=... dbname=... sslmode=require`); if unset the
+//! system is skipped.
+//!
+//! Fairness: because the server is remote, per-query latency is measured
+//! **server-side** via `EXPLAIN (ANALYZE)` execution time, which excludes the
+//! client↔cloud network RTT. Build time necessarily includes network ingest and
+//! is labeled as such in BENCHMARK.md.
 
 use std::time::Instant;
 
 use bytes::Bytes;
 use futures_util::SinkExt;
 use tokio::pin;
-use tokio_postgres::{CopyInSink, NoTls};
+use tokio_postgres::CopyInSink;
 
 use crate::dataset::{percentile, recall_at_k};
-use crate::systems::{container_disk_mb, container_mem_mb};
+use crate::systems::process_mem_mb;
 use crate::{Bench, Row};
 
-const CONN: &str = "host=127.0.0.1 port=5433 user=postgres password=bench dbname=bench";
-
 pub fn run(b: &Bench) -> Option<Result<Row, String>> {
+    let conn = std::env::var("PGVECTOR_CONN").ok()?;
     let rt = match tokio::runtime::Runtime::new() {
         Ok(r) => r,
         Err(e) => return Some(Err(e.to_string())),
     };
-    Some(rt.block_on(async { run_async(b).await }))
+    Some(rt.block_on(async { run_async(b, &conn).await }))
 }
 
 fn vec_literal(v: &[f32]) -> String {
@@ -34,8 +43,18 @@ fn vec_literal(v: &[f32]) -> String {
     s
 }
 
-async fn run_async(b: &Bench) -> Result<Row, String> {
-    let (client, connection) = tokio_postgres::connect(CONN, NoTls)
+async fn run_async(b: &Bench, conn_str: &str) -> Result<Row, String> {
+    // TLS (managed Postgres requires it). Use the ring provider explicitly to
+    // avoid aws-lc-rs's C/NASM build on Windows.
+    let _ = rustls::crypto::ring::default_provider().install_default();
+    let mut roots = rustls::RootCertStore::empty();
+    roots.extend(webpki_roots::TLS_SERVER_ROOTS.iter().cloned());
+    let tls_config = rustls::ClientConfig::builder()
+        .with_root_certificates(roots)
+        .with_no_client_auth();
+    let tls = tokio_postgres_rustls::MakeRustlsConnect::new(tls_config);
+
+    let (client, connection) = tokio_postgres::connect(conn_str, tls)
         .await
         .map_err(|e| format!("pgvector connect failed: {e}"))?;
     tokio::spawn(async move {
@@ -79,35 +98,50 @@ async fn run_async(b: &Bench) -> Result<Row, String> {
         .map_err(|e| e.to_string())?;
     let build_s = t.elapsed().as_secs_f64();
 
-    let mem_mb = container_mem_mb("compose-pgvector-1").unwrap_or(0.0);
-    let disk_mb = container_disk_mb("compose-pgvector-1", "/var/lib/postgresql/data").unwrap_or(0.0);
+    // Memory: for a managed instance we can't read server RSS; report 0 and note
+    // it in the writeup. (process_mem_mb kept for a future local-postgres path.)
+    let mem_mb = process_mem_mb("this-process-does-not-exist").unwrap_or(0.0);
+    let disk_mb = 0.0;
 
-    // ── Query sweep ──────────────────────────────────────────────
-    let stmt = client
+    // ── Query sweep: ids from the real query (recall), latency from
+    //    server-side EXPLAIN ANALYZE execution time (excludes RTT) ──
+    let sel = client
         .prepare("SELECT id FROM items ORDER BY emb <-> $1::vector LIMIT $2")
         .await
         .map_err(|e| e.to_string())?;
     let mut results = Vec::with_capacity(b.queries.len());
     let mut lat = Vec::with_capacity(b.queries.len());
-    let t_all = Instant::now();
     for q in &b.queries {
         let lit = vec_literal(q);
-        let t = Instant::now();
         let rows = client
-            .query(&stmt, &[&lit, &(b.k as i64)])
+            .query(&sel, &[&lit, &(b.k as i64)])
             .await
             .map_err(|e| e.to_string())?;
-        lat.push(t.elapsed().as_micros());
         results.push(rows.iter().map(|r| r.get::<_, i32>(0).to_string()).collect::<Vec<_>>());
+
+        // Server-side execution time (text EXPLAIN, parse "Execution Time:").
+        let explain_sql = format!(
+            "EXPLAIN (ANALYZE) SELECT id FROM items ORDER BY emb <-> '{lit}'::vector LIMIT {}",
+            b.k
+        );
+        let ex_rows = client.query(explain_sql.as_str(), &[]).await.map_err(|e| e.to_string())?;
+        let mut ms = 0.0f64;
+        for r in &ex_rows {
+            let line: String = r.get(0);
+            if let Some(rest) = line.trim().strip_prefix("Execution Time:") {
+                ms = rest.trim().trim_end_matches("ms").trim().parse().unwrap_or(0.0);
+            }
+        }
+        lat.push((ms * 1000.0) as u128); // µs
     }
-    let total_s = t_all.elapsed().as_secs_f64();
     lat.sort_unstable();
+    let qps = 1_000_000.0 / (lat.iter().sum::<u128>() as f64 / lat.len() as f64).max(1.0);
 
     Ok(Row {
-        system: "pgvector".to_string(),
+        system: "pgvector(neon)".to_string(),
         recall10: recall_at_k(&results, &b.truth, b.k),
         build_s,
-        qps: b.queries.len() as f64 / total_s,
+        qps,
         p50_us: percentile(&lat, 50.0),
         p99_us: percentile(&lat, 99.0),
         mem_mb,

@@ -1,14 +1,14 @@
-//! qdrant adapter — REST API against the compose container (host port 6334).
+//! qdrant adapter — native Windows binary (qdrant.exe) on REST port 6333.
 
 use std::time::{Duration, Instant};
 
 use serde_json::json;
 
 use crate::dataset::{percentile, recall_at_k};
-use crate::systems::{container_disk_mb, container_mem_mb};
+use crate::systems::{env_disk_mb, process_mem_mb};
 use crate::{Bench, Row};
 
-const BASE: &str = "http://127.0.0.1:6334";
+const BASE: &str = "http://127.0.0.1:6333";
 const COLLECTION: &str = "bench";
 
 pub fn run(b: &Bench) -> Option<Result<Row, String>> {
@@ -79,8 +79,8 @@ async fn run_async(b: &Bench) -> Result<Row, String> {
     }
     let build_s = t.elapsed().as_secs_f64();
 
-    let mem_mb = container_mem_mb("compose-qdrant-1").unwrap_or(0.0);
-    let disk_mb = container_disk_mb("compose-qdrant-1", "/qdrant/storage").unwrap_or(0.0);
+    let mem_mb = process_mem_mb("qdrant").unwrap_or(0.0);
+    let disk_mb = env_disk_mb("QDRANT_DATA");
 
     // ── Query sweep ──────────────────────────────────────────────
     let mut results = Vec::with_capacity(b.queries.len());

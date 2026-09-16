@@ -1,4 +1,4 @@
-//! chroma adapter — REST API against the compose container (host port 8000).
+//! chroma adapter — native chroma server (pip chromadb) on REST port 8000.
 //!
 //! Targets the v1 API with explicit tenant/database, which chroma 0.5.x still
 //! serves. If a deployment only exposes v2, this adapter reports the error
@@ -9,7 +9,7 @@ use std::time::{Duration, Instant};
 use serde_json::json;
 
 use crate::dataset::{percentile, recall_at_k};
-use crate::systems::{container_disk_mb, container_mem_mb};
+use crate::systems::{env_disk_mb, process_mem_mb};
 use crate::{Bench, Row};
 
 const BASE: &str = "http://127.0.0.1:8000";
@@ -71,8 +71,8 @@ async fn run_async(b: &Bench) -> Result<Row, String> {
     }
     let build_s = t.elapsed().as_secs_f64();
 
-    let mem_mb = container_mem_mb("compose-chroma-1").unwrap_or(0.0);
-    let disk_mb = container_disk_mb("compose-chroma-1", "/chroma/chroma").unwrap_or(0.0);
+    let mem_mb = process_mem_mb("python").unwrap_or(0.0);
+    let disk_mb = env_disk_mb("CHROMA_DATA");
 
     // ── Query sweep ──────────────────────────────────────────────
     let mut results = Vec::with_capacity(b.queries.len());

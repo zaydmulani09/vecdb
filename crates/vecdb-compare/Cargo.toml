@@ -18,6 +18,9 @@ reqwest = { workspace = true }
 tokio = { workspace = true }
 # pgvector over plain postgres (no TLS needed for a local container).
 tokio-postgres = "0.7"
+tokio-postgres-rustls = "0.13"
+rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12", "logging"] }
+webpki-roots = "0.26"
 sysinfo = "0.32"
 rayon = { workspace = true }
 futures-util = "0.3"

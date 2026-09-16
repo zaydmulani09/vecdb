@@ -21,44 +21,33 @@ pub fn dir_size(dir: &Path) -> u64 {
     total
 }
 
-/// A container's resident memory in MB via `docker stats` (best effort).
-pub fn container_mem_mb(name: &str) -> Option<f64> {
-    let out = std::process::Command::new("docker")
-        .args(["stats", "--no-stream", "--format", "{{.MemUsage}}", name])
-        .output()
-        .ok()?;
-    let s = String::from_utf8_lossy(&out.stdout);
-    // e.g. "153.6MiB / 4GiB"
-    let used = s.split('/').next()?.trim();
-    parse_size_mb(used)
-}
-
-/// A container path's size in MB via `docker exec du` (best effort; `du` may be
-/// absent in minimal images, in which case this returns `None`).
-pub fn container_disk_mb(name: &str, path: &str) -> Option<f64> {
-    let out = std::process::Command::new("docker")
-        .args(["exec", name, "du", "-sb", path])
-        .output()
-        .ok()?;
-    if !out.status.success() {
-        return None;
+/// Summed resident memory (MB) of all running processes whose name contains
+/// `substr` (case-insensitive) — the native-server equivalent of docker stats.
+/// Best effort; approximate (postgres/python spawn multiple processes).
+pub fn process_mem_mb(substr: &str) -> Option<f64> {
+    use sysinfo::System;
+    let mut s = System::new();
+    s.refresh_all();
+    let needle = substr.to_lowercase();
+    let total: u64 = s
+        .processes()
+        .values()
+        .filter(|p| p.name().to_string_lossy().to_lowercase().contains(&needle))
+        .map(|p| p.memory())
+        .sum();
+    if total == 0 {
+        None
+    } else {
+        Some(total as f64 / 1e6)
     }
-    let s = String::from_utf8_lossy(&out.stdout);
-    let bytes: f64 = s.split_whitespace().next()?.parse().ok()?;
-    Some(bytes / 1e6)
 }
 
-fn parse_size_mb(s: &str) -> Option<f64> {
-    let s = s.trim();
-    let (num, unit) = s.split_at(s.find(|c: char| c.is_alphabetic())?);
-    let v: f64 = num.trim().parse().ok()?;
-    Some(match unit.trim() {
-        "B" => v / 1e6,
-        "KiB" | "kB" | "KB" => v / 1e3,
-        "MiB" | "MB" => v,
-        "GiB" | "GB" => v * 1e3,
-        _ => v,
-    })
+/// On-disk size (MB) of the directory named by env var `var`, if set.
+pub fn env_disk_mb(var: &str) -> f64 {
+    std::env::var(var)
+        .ok()
+        .map(|p| dir_size(Path::new(&p)) as f64 / 1e6)
+        .unwrap_or(0.0)
 }
 
 /// Current process resident memory, in bytes (best effort).
