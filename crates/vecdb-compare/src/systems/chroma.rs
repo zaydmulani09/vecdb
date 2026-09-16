@@ -40,7 +40,12 @@ async fn run_async(b: &Bench) -> Result<Row, String> {
         .await;
     let created: serde_json::Value = http
         .post(&coll_url)
-        .json(&json!({ "name": "bench", "metadata": { "hnsw:space": "l2" } }))
+        .json(&json!({
+            "name": "bench",
+            // Raise search ef from the default 10 to a production-comparable
+            // value so recall is in the same range as the other systems.
+            "metadata": { "hnsw:space": "l2", "hnsw:search_ef": 100 }
+        }))
         .send()
         .await
         .map_err(|e| e.to_string())?

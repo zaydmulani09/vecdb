@@ -31,9 +31,15 @@ async fn run_async(b: &Bench) -> Result<Row, String> {
 
     // Fresh collection (Euclidean).
     let _ = http.delete(format!("{BASE}/collections/{COLLECTION}")).send().await;
+    // indexing_threshold low so every segment builds its HNSW index (with the
+    // default 20000, multi-segment collections on this many cores leave each
+    // segment below threshold and unindexed → brute force).
     let resp = http
         .put(format!("{BASE}/collections/{COLLECTION}"))
-        .json(&json!({ "vectors": { "size": b.dim, "distance": "Euclid" } }))
+        .json(&json!({
+            "vectors": { "size": b.dim, "distance": "Euclid" },
+            "optimizers_config": { "indexing_threshold": 1000 }
+        }))
         .send()
         .await
         .map_err(|e| e.to_string())?;
