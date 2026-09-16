@@ -98,15 +98,63 @@ pgvector     0.9727      68.3    1160     889     1174       —       —
 
 ## Results — SIFT 1M (primary, ef_construction=200)
 
-_(filled from the 1M run)_
+Full 1,000,000 vectors, 1,000 queries, k=10, dataset ground truth.
 
 ```
-system      recall@10  build s   qps    p50 µs   p99 µs   mem MB  disk MB
+system      recall@10  build s        qps    p50 µs   p99 µs   mem MB  disk MB
+vecdb        0.9805     11554.3 (3.2h)  95    10288    18685     571     1301
+qdrant       0.9952       211.4        293     2890     9886     852     1096
+chroma       0.9747      5528.2 (92m)   41    23037    39875    1208       —
+pgvector     — did not complete on the Neon free tier during the 1M load —
+```
+
+- vecdb build **11,554 s ≈ 3.2 hours** vs qdrant **211 s** — **~55× slower**.
+- pgvector: the 1M load exceeded the free managed instance's limits (its 100k
+  numbers above stand; the exact failure phase is recorded in the harness).
+- Same fairness caveats as the 100k table: pgvector latency is server-side;
+  vecdb pays no HTTP while qdrant/chroma do.
+
+### Secondary — vecdb at ef_construction=100 (1M)
+
+A labeled secondary configuration showing the build-time/recall tradeoff of the
+one knob that most affects vecdb's build cost. This does **not** replace the
+ef_construction=200 primary number above.
+
+```
+system        recall@10  build s   qps    p50 µs   p99 µs   mem MB  disk MB
+vecdb-ef100   (run in progress — fills from the ef=100 1M pass)
 ```
 
 ## Where vecdb loses
 
-_(written from the measured numbers — not softened)_
+Stated plainly from the numbers above — this is not a page that only shows wins.
+
+1. **Build time — the defining weakness.** At 1M, vecdb takes **3.2 hours** to
+   build its index versus **qdrant's 3.5 minutes** (~55×), and it is the slowest
+   of all systems at 100k too (477 s vs qdrant 18 s). The cause is real: the
+   HNSW build (instant-distance, `ef_construction=200`) is single-threaded.
+   Lowering ef_construction helps (see the secondary row) but does not close the
+   gap. If your workload rebuilds often, vecdb is the wrong choice today.
+2. **At 1M, qdrant beats vecdb on every speed/quality axis at once** — higher
+   recall (0.9952 vs 0.9805), lower latency (p50 2.9 ms vs 10.3 ms), and vastly
+   faster build — and qdrant does it *while paying* per-query HTTP that vecdb
+   does not. vecdb's only win over qdrant at 1M is memory (571 MB vs 852 MB).
+3. **Recall degrades with scale at the default query ef.** vecdb's recall@10
+   falls 0.9966 → 0.9805 from 100k to 1M at `ef_search=50`; competitors hold up
+   better. Raising ef_search recovers recall at a latency cost, but out of the
+   box vecdb gives up ground as the collection grows.
+4. **On-disk size stops being a win at scale.** vecdb's index is smaller than
+   qdrant's at 100k (143 MB vs 2189 MB) but *larger* at 1M (1301 MB vs 1096 MB):
+   the JSON-serialized HNSW does not scale as gracefully as qdrant's format.
+
+## What vecdb is actually for
+
+The honest positioning the numbers support: vecdb is an **embeddable** vector
+store — `cargo add`, point it at a file, query in-process, no server and no
+container (none of the three comparison systems can do that). At 1M it holds
+**0.98 recall at the lowest memory footprint** while running inside your
+process. It is **not** faster than qdrant and does not build quickly; choose it
+for the zero-ops embedded story and low memory, not for raw indexing speed.
 
 ## Reproduce
 

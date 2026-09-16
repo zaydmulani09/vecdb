@@ -43,6 +43,14 @@ fn vec_literal(v: &[f32]) -> String {
     s
 }
 
+fn pgerr(phase: &str, e: tokio_postgres::Error) -> String {
+    if let Some(db) = e.as_db_error() {
+        format!("{phase}: {} [SQLSTATE {}]", db.message(), db.code().code())
+    } else {
+        format!("{phase}: {e}")
+    }
+}
+
 async fn run_async(b: &Bench, conn_str: &str) -> Result<Row, String> {
     // TLS (managed Postgres requires it). Use the ring provider explicitly to
     // avoid aws-lc-rs's C/NASM build on Windows.
@@ -63,12 +71,10 @@ async fn run_async(b: &Bench, conn_str: &str) -> Result<Row, String> {
 
     client
         .batch_execute(
-            "CREATE EXTENSION IF NOT EXISTS vector; \
-             DROP TABLE IF EXISTS items; \
-             CREATE TABLE items (id int PRIMARY KEY, emb vector(128));",
+            "CREATE EXTENSION IF NOT EXISTS vector; DROP TABLE IF EXISTS items; CREATE TABLE items (id int PRIMARY KEY, emb vector(128));",
         )
         .await
-        .map_err(|e| e.to_string())?;
+        .map_err(|e| pgerr("create table", e))?;
 
     // ── Build: COPY rows in, then create the HNSW index ──────────
     let t = Instant::now();
@@ -76,7 +82,7 @@ async fn run_async(b: &Bench, conn_str: &str) -> Result<Row, String> {
         let sink: CopyInSink<Bytes> = client
             .copy_in("COPY items (id, emb) FROM STDIN")
             .await
-            .map_err(|e| e.to_string())?;
+            .map_err(|e| pgerr("copy_in", e))?;
         pin!(sink);
         let mut buf = String::new();
         for (i, v) in b.base.iter().enumerate() {
@@ -87,15 +93,15 @@ async fn run_async(b: &Bench, conn_str: &str) -> Result<Row, String> {
             buf.push('\n');
             sink.send(Bytes::copy_from_slice(buf.as_bytes()))
                 .await
-                .map_err(|e| e.to_string())?;
+                .map_err(|e| pgerr("copy send", e))?;
         }
-        sink.close().await.map_err(|e| e.to_string())?;
+        sink.close().await.map_err(|e| pgerr("copy close", e))?;
     }
     // Default pgvector HNSW build params (m=16, ef_construction=64).
     client
         .batch_execute("CREATE INDEX ON items USING hnsw (emb vector_l2_ops);")
         .await
-        .map_err(|e| e.to_string())?;
+        .map_err(|e| pgerr("create index", e))?;
     let build_s = t.elapsed().as_secs_f64();
 
     // Memory: for a managed instance we can't read server RSS; report 0 and note

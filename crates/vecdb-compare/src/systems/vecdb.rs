@@ -16,7 +16,19 @@ pub fn run(b: &Bench) -> Result<Row, String> {
     let db = Db::open(&tmp).map_err(|e| e.to_string())?;
     let mut cfg = CollectionConfig::new("bench", b.dim);
     cfg.metric = DistanceMetric::Euclidean;
+    // ef_construction is the primary knob for the build-time/recall tradeoff;
+    // override via env for the secondary row (default 200).
+    let ef_c: usize = std::env::var("VECDB_EF_CONSTRUCTION")
+        .ok()
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(200);
+    cfg.hnsw_ef_construction = ef_c;
     let mut c = db.create_collection_with(cfg).map_err(|e| e.to_string())?;
+    let sys_name = if ef_c == 200 {
+        "vecdb".to_string()
+    } else {
+        format!("vecdb-ef{ef_c}")
+    };
 
     let items: Vec<_> = b
         .base
@@ -50,7 +62,7 @@ pub fn run(b: &Bench) -> Result<Row, String> {
 
     let _ = std::fs::remove_dir_all(&tmp);
     Ok(Row {
-        system: "vecdb".to_string(),
+        system: sys_name,
         recall10: recall_at_k(&results, &b.truth, b.k),
         build_s,
         qps: b.queries.len() as f64 / total_s,
