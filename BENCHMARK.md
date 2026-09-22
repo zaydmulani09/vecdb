@@ -146,8 +146,11 @@ vecdb-ef100    0.9803     6145.6 (1.7h)  539    1847     3029      611     1301
 ```
 
 Lowering ef_construction from 200 to 100 **cuts build 2.5 h → 1.7 h (−31%) for
-almost no recall cost** (0.9832 → 0.9803). It is the most effective build-time
-knob vecdb exposes today. (This ef=100 run's query sweep was not thermally
+almost no recall cost** (0.9832 → 0.9803). **Recommendation: use
+`ef_construction=100` as the default unless you specifically need maximum
+recall** — it's the best build-time knob vecdb exposes today. But keep the scale
+honest: **1.7 h is still slow** (~29× qdrant's 211 s) — this is a smaller build
+penalty, not a solved one. (This ef=100 run's query sweep was not thermally
 throttled, so its p50 1847 µs / qps 539 also serve as the clean-state query
 reference cited in the primary table's † note.)
 
