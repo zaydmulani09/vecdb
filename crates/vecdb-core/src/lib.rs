@@ -1,4 +1,5 @@
 pub mod config;
+pub mod db;
 pub mod errors;
 pub mod hybrid;
 pub mod index;
@@ -7,7 +8,8 @@ pub mod sparse;
 pub mod storage;
 pub mod types;
 
-pub use config::ServerConfig;
+// Embedded API — the primary, no-server entry point.
+pub use db::{Collection, Db};
 pub use errors::{Result, VecDbError};
 pub use hybrid::{min_max_normalize, softmax_normalize, FusionStrategy, HybridEngine};
 pub use planner::sql::{

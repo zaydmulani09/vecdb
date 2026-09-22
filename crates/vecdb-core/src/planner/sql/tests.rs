@@ -360,6 +360,7 @@ mod sql_tests {
 
     /// Test 18 — negative floats inside vector literal parse correctly
     #[test]
+    #[allow(clippy::approx_constant)] // 3.14 here is a parsed lexer literal, not π
     fn test_lexer_negative_numbers_in_vector() {
         let mut lex = Lexer::new("[-1.5, 2.0, -0.5, 3.14]");
         let tokens = lex.tokenize().unwrap();

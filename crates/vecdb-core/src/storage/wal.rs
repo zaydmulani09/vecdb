@@ -98,6 +98,40 @@ impl WriteAheadLog {
         Ok(())
     }
 
+    /// Append many entries with a single `sync_all` at the end. Used by bulk
+    /// load, where per-entry fsync would dominate (one fsync per vector). The
+    /// batch is still crash-consistent: on a crash mid-batch, replay stops at
+    /// the last fully-written entry (length/checksum framing), and any partial
+    /// tail is ignored.
+    pub fn append_batch(&mut self, entries: &[WalEntry]) -> Result<()> {
+        if entries.is_empty() {
+            return Ok(());
+        }
+        self.file
+            .seek(SeekFrom::End(0))
+            .map_err(|e| VecDbError::StorageError(format!("wal seek failed: {e}")))?;
+
+        let mut buf = Vec::new();
+        for entry in entries {
+            let payload = serde_json::to_vec(entry)
+                .map_err(|e| VecDbError::SerializationError(e.to_string()))?;
+            let length = payload.len() as u32;
+            let cksum = checksum(&payload);
+            buf.extend_from_slice(&length.to_le_bytes());
+            buf.extend_from_slice(&payload);
+            buf.extend_from_slice(&cksum.to_le_bytes());
+        }
+        self.file
+            .write_all(&buf)
+            .map_err(|e| VecDbError::StorageError(format!("wal write failed: {e}")))?;
+        self.file
+            .sync_all()
+            .map_err(|e| VecDbError::StorageError(format!("wal flush failed: {e}")))?;
+
+        self.entry_count += entries.len();
+        Ok(())
+    }
+
     pub fn replay(&mut self) -> Result<Vec<WalEntry>> {
         // Read entire file via a fresh open/read/close cycle.
         // This is the most reliable approach on all platforms — avoids any

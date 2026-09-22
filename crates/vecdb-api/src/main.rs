@@ -1,5 +1,5 @@
 use clap::Parser;
-use vecdb_core::ServerConfig;
+use vecdb_core::config::ServerConfig;
 
 #[derive(Parser, Debug)]
 #[command(name = "vecdb", about = "Open source vector database")]

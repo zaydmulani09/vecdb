@@ -100,6 +100,27 @@ impl MetadataStore {
         Ok(())
     }
 
+    /// Insert/replace many records in a single transaction (bulk load).
+    pub fn upsert_batch(&self, items: &[(String, usize, &VectorRecord)]) -> Result<()> {
+        let mut conn = self.conn()?;
+        let now = now_unix();
+        let tx = conn.transaction()?;
+        {
+            let mut stmt = tx.prepare(
+                "INSERT OR REPLACE INTO vectors \
+                 (id, mmap_index, payload, text, created_at, updated_at, deleted) \
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, 0)",
+            )?;
+            for (id, mmap_index, record) in items {
+                let payload = serde_json::to_string(&record.payload)
+                    .map_err(|e| VecDbError::SerializationError(e.to_string()))?;
+                stmt.execute(params![id, *mmap_index as i64, payload, record.text, now, now])?;
+            }
+        }
+        tx.commit()?;
+        Ok(())
+    }
+
     pub fn get(&self, id: &str) -> Result<(usize, VectorRecord)> {
         let conn = self.conn()?;
         let row = conn.query_row(
@@ -200,23 +221,156 @@ impl MetadataStore {
         }
     }
 
+    /// Ensure a SQLite expression index exists for each declared payload field,
+    /// so selective filters on them are served from the index. Idempotent.
+    pub fn ensure_payload_indexes(&self, fields: &[String]) -> Result<()> {
+        let conn = self.conn()?;
+        for f in fields {
+            if !is_safe_json_path(f) {
+                continue;
+            }
+            let idx_name = format!("idx_pf_{}", f.replace('.', "_"));
+            let sql = format!(
+                "CREATE INDEX IF NOT EXISTS {idx_name} ON vectors (json_extract(payload, '$.{f}'))"
+            );
+            conn.execute(&sql, [])?;
+        }
+        Ok(())
+    }
+
     /// Return ids of all active records whose payload matches `filter`.
+    pub fn filter_ids(
+        &self,
+        filter: &serde_json::Value,
+        indexed: &[String],
+    ) -> Result<Vec<crate::types::VectorId>> {
+        Ok(self
+            .filter_ids_indexed(filter, indexed)?
+            .into_iter()
+            .map(|(id, _)| id)
+            .collect())
+    }
+
+    /// Like [`filter_ids`], but also returns each match's `mmap_index` so the
+    /// caller can fetch its vector directly for a filtered brute-force scan
+    /// (predicate pushdown: candidates come from the filter, not the ANN index).
     ///
-    /// Loads all active records from SQLite and evaluates the filter in-process.
-    /// Used by the pre-filter optimisation in `PlanExecutor`.
-    pub fn filter_ids(&self, filter: &serde_json::Value) -> Result<Vec<crate::types::VectorId>> {
+    /// Fast path: the predicate is pushed into SQLite via `json_extract`, so the
+    /// engine returns only referenced scalars and we never full-parse the 95%+
+    /// of payloads a selective filter excludes. Falls back to a full in-process
+    /// scan for filter shapes the pushdown can't represent identically.
+    pub fn filter_ids_indexed(
+        &self,
+        filter: &serde_json::Value,
+        indexed: &[String],
+    ) -> Result<Vec<(crate::types::VectorId, usize)>> {
+        if let Some(rows) = self.filter_pushdown(filter, indexed)? {
+            return Ok(rows);
+        }
+        self.filter_scan(filter)
+    }
+
+    /// SQL-pushdown fast path. Returns `None` (caller falls back) when the
+    /// filter shape can't be translated with identical semantics.
+    fn filter_pushdown(
+        &self,
+        filter: &serde_json::Value,
+        indexed: &[String],
+    ) -> Result<Option<Vec<(crate::types::VectorId, usize)>>> {
+        use crate::planner::executor::{apply_filter_with, collect_filter_fields};
+
+        let indexed_set: std::collections::HashSet<&str> =
+            indexed.iter().map(|s| s.as_str()).collect();
+
+        let mut fields = std::collections::BTreeSet::new();
+        if !collect_filter_fields(filter, &mut fields) || filter_contains_bool(filter) {
+            return Ok(None);
+        }
+        // Fields extracted via json_extract for the in-process re-eval, in a
+        // stable order (excluding "id", which comes from its own column). Bail
+        // if any field name can't be safely embedded in a JSON path.
+        let mut extracted: Vec<String> = Vec::new();
+        for f in &fields {
+            if f == "id" {
+                continue;
+            }
+            if !is_safe_json_path(f) {
+                return Ok(None);
+            }
+            extracted.push(f.clone());
+        }
+
+        // Build a SQL predicate that is a *superset* of the exact filter (it may
+        // over-match, e.g. non-numeric coerced by CAST, case-insensitive LIKE),
+        // so SQLite returns only the candidate rows and the Rust re-eval below
+        // trims to the exact set. If we can't build one, fall back.
+        let mut params: Vec<rusqlite::types::Value> = Vec::new();
+        let Some(where_super) = filter_to_sql_superset(filter, &mut params, &indexed_set) else {
+            return Ok(None);
+        };
+
+        let mut select = String::from("SELECT id, mmap_index");
+        for f in &extracted {
+            select.push_str(&format!(", json_extract(payload, '$.{f}')"));
+        }
+        select.push_str(" FROM vectors WHERE deleted = 0 AND ");
+        select.push_str(&where_super);
+
+        let conn = self.conn()?;
+        let mut stmt = match conn.prepare(&select) {
+            Ok(s) => s,
+            Err(_) => return Ok(None), // e.g. JSON1 unavailable → fall back
+        };
+        let ncols = extracted.len();
+        let rows_res = stmt.query_map(rusqlite::params_from_iter(params.iter()), |row| {
+            let id: String = row.get(0)?;
+            let idx: i64 = row.get(1)?;
+            let mut vals: Vec<rusqlite::types::Value> = Vec::with_capacity(ncols);
+            for c in 0..ncols {
+                vals.push(row.get::<usize, rusqlite::types::Value>(2 + c)?);
+            }
+            Ok((id, idx as usize, vals))
+        });
+        let rows: Vec<(String, usize, Vec<rusqlite::types::Value>)> = match rows_res {
+            Ok(iter) => iter.collect::<std::result::Result<_, _>>()?,
+            Err(_) => return Ok(None),
+        };
+
+        let mut out = Vec::new();
+        for (id, idx, vals) in rows {
+            let resolve = |field: &str| -> Option<serde_json::Value> {
+                if field == "id" {
+                    return Some(serde_json::Value::String(id.clone()));
+                }
+                let pos = extracted.iter().position(|f| f == field)?;
+                sqlite_to_json(&vals[pos])
+            };
+            if apply_filter_with(filter, &resolve) {
+                out.push((id, idx));
+            }
+        }
+        Ok(Some(out))
+    }
+
+    /// Fallback: load active rows and evaluate the filter in-process.
+    fn filter_scan(
+        &self,
+        filter: &serde_json::Value,
+    ) -> Result<Vec<(crate::types::VectorId, usize)>> {
         use crate::planner::executor::apply_json_filter;
         use crate::types::SearchResult;
 
         let conn = self.conn()?;
-        let mut stmt = conn.prepare("SELECT id, payload, text FROM vectors WHERE deleted = 0")?;
-
-        let rows: Vec<(String, String, Option<String>)> = stmt
-            .query_map([], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)))?
+        let mut stmt =
+            conn.prepare("SELECT id, mmap_index, payload, text FROM vectors WHERE deleted = 0")?;
+        let rows: Vec<(String, i64, String, Option<String>)> = stmt
+            .query_map([], |row| {
+                Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?))
+            })?
             .collect::<std::result::Result<_, _>>()?;
 
-        let mut ids = Vec::new();
-        for (id, payload_str, text) in rows {
+        let mut out = Vec::new();
+        for (id, idx, payload_str, text) in rows {
             let payload: serde_json::Value = serde_json::from_str(&payload_str)
                 .unwrap_or_else(|_| serde_json::Value::Object(Default::default()));
             let fake = SearchResult {
@@ -228,10 +382,10 @@ impl MetadataStore {
                 text,
             };
             if apply_json_filter(&fake, filter) {
-                ids.push(id);
+                out.push((id, idx as usize));
             }
         }
-        Ok(ids)
+        Ok(out)
     }
 
     pub fn list_collections(&self) -> Result<Vec<CollectionConfig>> {
@@ -246,6 +400,196 @@ impl MetadataStore {
                     .map_err(|e| VecDbError::SerializationError(e.to_string()))
             })
             .collect()
+    }
+}
+
+/// A field name is safe to embed in a `'$.<field>'` JSON path when it contains
+/// only characters that can't break out of the quoted path literal.
+fn is_safe_json_path(field: &str) -> bool {
+    !field.is_empty()
+        && field
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '.')
+}
+
+/// `json_extract` maps a JSON boolean to SQLite integer 0/1, which would not
+/// compare equal to a `Bool` filter value the way the in-process path does — so
+/// any bool in the filter forces the fallback.
+fn filter_contains_bool(filter: &serde_json::Value) -> bool {
+    match filter {
+        serde_json::Value::Bool(_) => true,
+        serde_json::Value::Array(a) => a.iter().any(filter_contains_bool),
+        serde_json::Value::Object(o) => o.values().any(filter_contains_bool),
+        _ => false,
+    }
+}
+
+/// SQL expression that reads a field: the `id` column, or `json_extract` of a
+/// (safe) payload path. `None` if the path is unsafe.
+fn field_sql_expr(field: &str) -> Option<String> {
+    if field == "id" {
+        return Some("id".to_string());
+    }
+    if !is_safe_json_path(field) {
+        return None;
+    }
+    Some(format!("json_extract(payload, '$.{field}')"))
+}
+
+/// Text and numeric forms of a scalar filter value, for the equality superset
+/// (`CAST(... AS TEXT) = text OR CAST(... AS REAL) = real`). Numeric form is
+/// `Null` when the value isn't numeric.
+fn value_forms(v: &serde_json::Value) -> Option<(rusqlite::types::Value, rusqlite::types::Value)> {
+    use rusqlite::types::Value as V;
+    match v {
+        serde_json::Value::String(s) => {
+            let real = s.parse::<f64>().ok().map(V::Real).unwrap_or(V::Null);
+            Some((V::Text(s.clone()), real))
+        }
+        serde_json::Value::Number(n) => {
+            let f = n.as_f64()?;
+            Some((V::Text(n.to_string()), V::Real(f)))
+        }
+        _ => None,
+    }
+}
+
+fn value_as_real(v: &serde_json::Value) -> Option<f64> {
+    match v {
+        serde_json::Value::Number(n) => n.as_f64(),
+        serde_json::Value::String(s) => s.parse::<f64>().ok(),
+        _ => None,
+    }
+}
+
+/// Natural-typed SQLite param for a JSON number (integer stays integer so it
+/// matches an integer-valued expression index).
+fn natural_number_param(n: &serde_json::Number) -> Option<rusqlite::types::Value> {
+    use rusqlite::types::Value as V;
+    if let Some(i) = n.as_i64() {
+        Some(V::Integer(i))
+    } else {
+        n.as_f64().map(V::Real)
+    }
+}
+
+/// One leaf condition → SQL predicate. For an **indexed** field the predicate
+/// references the bare `json_extract(...)` expression (no `CAST`) so SQLite can
+/// use the expression index; correctness for that field then assumes a
+/// consistent scalar type (the normal contract for an indexed column), and the
+/// Rust re-eval still runs. For non-indexed fields it emits a `CAST` superset
+/// that never excludes a true match. `None` forces the caller to fall back.
+fn leaf_sql_superset(
+    field: &str,
+    op: &str,
+    value: &serde_json::Value,
+    params: &mut Vec<rusqlite::types::Value>,
+    indexed: &std::collections::HashSet<&str>,
+) -> Option<String> {
+    use rusqlite::types::Value as V;
+    let expr = field_sql_expr(field)?;
+    let is_indexed = indexed.contains(field);
+
+    if is_indexed {
+        // Index-friendly: bare expression compared to a natural-typed param.
+        match op {
+            "=" => {
+                let p = match value {
+                    serde_json::Value::Number(n) => natural_number_param(n)?,
+                    serde_json::Value::String(s) => V::Text(s.clone()),
+                    _ => return None,
+                };
+                params.push(p);
+                return Some(format!("{expr} = ?"));
+            }
+            "<" | "<=" | ">" | ">=" => {
+                let r = value_as_real(value)?;
+                params.push(V::Real(r));
+                return Some(format!("{expr} {op} ?"));
+            }
+            "LIKE" => {
+                let s = value.as_str()?;
+                params.push(V::Text(s.to_string()));
+                return Some(format!("{expr} LIKE ?"));
+            }
+            _ => return None,
+        }
+    }
+
+    // Non-indexed: CAST superset (over-matches, trimmed by the Rust re-eval).
+    match op {
+        "=" => {
+            let (text, real) = value_forms(value)?;
+            params.push(text);
+            params.push(real);
+            Some(format!(
+                "(CAST({expr} AS TEXT) = ? OR CAST({expr} AS REAL) = ?)"
+            ))
+        }
+        "<" | "<=" | ">" | ">=" => {
+            let r = value_as_real(value)?;
+            params.push(V::Real(r));
+            Some(format!("CAST({expr} AS REAL) {op} ?"))
+        }
+        "LIKE" => {
+            let s = value.as_str()?;
+            params.push(V::Text(s.to_string()));
+            Some(format!("CAST({expr} AS TEXT) LIKE ?"))
+        }
+        _ => None, // e.g. "!=" — rarely selective; let the caller fall back
+    }
+}
+
+/// Translate a filter into a superset SQL predicate (never excludes a true
+/// match; the Rust re-eval trims over-matches). `None` if any part is
+/// unsupported.
+fn filter_to_sql_superset(
+    filter: &serde_json::Value,
+    params: &mut Vec<rusqlite::types::Value>,
+    indexed: &std::collections::HashSet<&str>,
+) -> Option<String> {
+    match filter {
+        serde_json::Value::Array(cs) => {
+            let mut parts = Vec::with_capacity(cs.len());
+            for c in cs {
+                parts.push(filter_to_sql_superset(c, params, indexed)?);
+            }
+            if parts.is_empty() {
+                return None;
+            }
+            Some(format!("({})", parts.join(" AND ")))
+        }
+        serde_json::Value::Object(obj) => {
+            if obj.contains_key("field") && obj.contains_key("op") && obj.contains_key("value") {
+                let field = obj.get("field")?.as_str()?;
+                let op = obj.get("op")?.as_str()?;
+                let value = obj.get("value")?;
+                leaf_sql_superset(field, op, value, params, indexed)
+            } else {
+                if obj.is_empty() {
+                    return None;
+                }
+                let mut parts = Vec::with_capacity(obj.len());
+                for (k, v) in obj {
+                    parts.push(leaf_sql_superset(k, "=", v, params, indexed)?);
+                }
+                Some(format!("({})", parts.join(" AND ")))
+            }
+        }
+        _ => None,
+    }
+}
+
+/// Convert a scalar returned by `json_extract` back to a JSON value, matching
+/// what the in-process resolver would produce (nulls → absent field).
+fn sqlite_to_json(v: &rusqlite::types::Value) -> Option<serde_json::Value> {
+    use rusqlite::types::Value as V;
+    match v {
+        V::Null => None,
+        V::Integer(i) => Some(serde_json::Value::Number((*i).into())),
+        V::Real(f) => serde_json::Number::from_f64(*f).map(serde_json::Value::Number),
+        V::Text(s) => Some(serde_json::Value::String(s.clone())),
+        V::Blob(_) => None,
     }
 }
 

@@ -10,3 +10,10 @@ benches/results/
 test_data_smoke/
 test_smoke_data/
 .claude/
+
+# Benchmark datasets (fetched, not committed)
+benchmarks/data/
+
+# stray server run artifacts
+/vbchroma/
+*.log

@@ -48,6 +48,7 @@ impl Storage {
         let wal = WriteAheadLog::open(&wal_path)?;
         let metadata = MetadataStore::open(&metadata_path)?;
         metadata.save_collection(config)?;
+        metadata.ensure_payload_indexes(&config.indexed_payload_fields)?;
 
         let index = AnyIndex::from_config(config);
         let sparse = SparseIndex::create(&sparse_path);
@@ -79,6 +80,7 @@ impl Storage {
         let wal = WriteAheadLog::open(&wal_path)?;
         let metadata = MetadataStore::open(&metadata_path)?;
         let config = metadata.load_collection(collection_name)?;
+        metadata.ensure_payload_indexes(&config.indexed_payload_fields)?;
 
         let (index, saved_index_exists) =
             AnyIndex::load_or_create(data_dir, collection_name, &config);
@@ -163,6 +165,54 @@ impl Storage {
         }
 
         Ok(result)
+    }
+
+    /// Bulk-insert new records efficiently: append all vectors, write the WAL in
+    /// one batched fsync, insert metadata in one transaction, then build the
+    /// dense (and sparse) index once — instead of the per-insert index rebuilds
+    /// `upsert` triggers. Intended for loading a fresh/large collection.
+    ///
+    /// Assumes the ids are new (uses append semantics). A final checkpoint
+    /// truncates the WAL, since the data is durable in the vector store, the
+    /// metadata db, and the saved index.
+    pub fn bulk_upsert(&mut self, records: Vec<VectorRecord>) -> Result<usize> {
+        for r in &records {
+            if r.vector.len() != self.config.dimension {
+                return Err(VecDbError::DimensionMismatch {
+                    expected: self.config.dimension,
+                    got: r.vector.len(),
+                });
+            }
+        }
+
+        let mut wal_entries = Vec::with_capacity(records.len());
+        let mut items: Vec<(String, usize, VectorRecord)> = Vec::with_capacity(records.len());
+        for record in records {
+            let id = record.id.clone();
+            let mmap_index = self.vectors.append(&record.vector)?;
+            wal_entries.push(WalEntry::Insert {
+                id: id.clone(),
+                mmap_index,
+                record: record.clone(),
+            });
+            items.push((id, mmap_index, record));
+        }
+
+        self.wal.append_batch(&wal_entries)?;
+        drop(wal_entries);
+
+        let refs: Vec<(String, usize, &VectorRecord)> =
+            items.iter().map(|(id, idx, rec)| (id.clone(), *idx, rec)).collect();
+        self.metadata.upsert_batch(&refs)?;
+        drop(refs);
+        let count = items.len();
+        drop(items);
+
+        // Build the dense + sparse indexes once from all active records.
+        self.rebuild_index()?;
+        // Data is durable in mmap + metadata; collapse the WAL.
+        self.checkpoint()?;
+        Ok(count)
     }
 
     pub fn delete(&mut self, id: &VectorId) -> Result<()> {
@@ -278,6 +328,98 @@ impl Storage {
                     text: rec.text,
                 }),
                 Err(_) => continue,
+            }
+        }
+        Ok(results)
+    }
+
+    /// Dense k-NN search restricted to records whose payload matches `filter`,
+    /// with predicate pushdown.
+    ///
+    /// When the filter is selective (the allowed set is small relative to the
+    /// collection), candidates are generated **from the filter**: an exact,
+    /// full-precision brute-force scan over only the matching vectors. This
+    /// never scores the excluded majority, so a 95%-eliminating filter costs
+    /// roughly 5% of the work — and is exact, unlike oversample-then-discard.
+    ///
+    /// When the filter is weakly selective, it falls back to an ANN search with
+    /// a post-filter (few candidates are dropped, so recall stays high).
+    pub fn search_dense_filtered(
+        &self,
+        query: &Vector,
+        k: usize,
+        filter: &serde_json::Value,
+    ) -> Result<Vec<SearchResult>> {
+        if query.len() != self.config.dimension {
+            return Err(VecDbError::DimensionMismatch {
+                expected: self.config.dimension,
+                got: query.len(),
+            });
+        }
+
+        let allowed = self
+            .metadata
+            .filter_ids_indexed(filter, &self.config.indexed_payload_fields)?;
+        if allowed.is_empty() {
+            return Ok(vec![]);
+        }
+        let n = self.metadata.count_active()?;
+        // Brute-force the allowed set when it is small enough that scanning it
+        // is cheaper (and exact) than an oversampled ANN search. Covers all
+        // high-selectivity filters (the gate case) and small collections.
+        let bruteforce_threshold = (n / 4).max(8192);
+        let metric = &self.config.metric;
+
+        if allowed.len() <= bruteforce_threshold {
+            let mut scored: Vec<(VectorId, f32)> = Vec::with_capacity(allowed.len());
+            for (id, mmap_index) in &allowed {
+                let v = self.vectors.get(*mmap_index)?;
+                let dist = crate::index::compute_distance(query, &v, metric);
+                scored.push((id.clone(), crate::index::to_score(dist, metric)));
+            }
+            scored.sort_unstable_by(|a, b| {
+                b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal)
+            });
+            scored.truncate(k);
+
+            let mut results = Vec::with_capacity(scored.len());
+            for (id, score) in scored {
+                if let Ok((_, rec)) = self.metadata.get(&id) {
+                    results.push(SearchResult {
+                        id,
+                        score,
+                        dense_score: Some(score),
+                        sparse_score: None,
+                        payload: rec.payload,
+                        text: rec.text,
+                    });
+                }
+            }
+            return Ok(results);
+        }
+
+        // Weakly selective: ANN + post-filter.
+        let allowed_set: std::collections::HashSet<VectorId> =
+            allowed.into_iter().map(|(id, _)| id).collect();
+        let oversample = (k * 4).max(k + 50);
+        let hits = self.index.search(query, oversample)?;
+        let mut results = Vec::with_capacity(k);
+        for (id, score) in hits {
+            if !allowed_set.contains(&id) {
+                continue;
+            }
+            if let Ok((_, rec)) = self.metadata.get(&id) {
+                results.push(SearchResult {
+                    id,
+                    score,
+                    dense_score: Some(score),
+                    sparse_score: None,
+                    payload: rec.payload,
+                    text: rec.text,
+                });
+            }
+            if results.len() >= k {
+                break;
             }
         }
         Ok(results)

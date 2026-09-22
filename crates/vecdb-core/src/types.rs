@@ -30,6 +30,33 @@ pub enum IndexType {
     IVF,
 }
 
+/// Per-collection storage/index precision mode.
+///
+/// `None` keeps full float32 vectors in the in-memory index (default,
+/// unchanged behavior). `ScalarInt8` stores an int8 scalar-quantized index in
+/// memory (~4× smaller) while the on-disk vectors remain float32 — the
+/// full-precision copy stays authoritative and is used to (re)train the
+/// quantizer on rebuild.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
+pub enum Quantization {
+    #[default]
+    None,
+    ScalarInt8,
+    /// 1-bit binary quantization (~32× smaller; Hamming distance, coarse — best
+    /// paired with a full-precision rerank of top candidates).
+    Binary,
+}
+
+impl fmt::Display for Quantization {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Quantization::None => write!(f, "none"),
+            Quantization::ScalarInt8 => write!(f, "scalar_int8"),
+            Quantization::Binary => write!(f, "binary"),
+        }
+    }
+}
+
 impl fmt::Display for IndexType {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
@@ -50,6 +77,16 @@ pub struct CollectionConfig {
     pub hnsw_ef_search: usize,
     pub bm25_k1: f32,
     pub bm25_b: f32,
+    /// In-memory index precision. Defaults to `None` (float32). `#[serde(default)]`
+    /// keeps collections written before this field was added loadable.
+    #[serde(default)]
+    pub quantization: Quantization,
+    /// Payload fields to index for fast filtered search. Each becomes a SQLite
+    /// expression index on `json_extract(payload, '$.<field>')`, so a selective
+    /// filter on that field is served from the index instead of scanning every
+    /// payload. Dotted paths (e.g. `"meta.year"`) are supported.
+    #[serde(default)]
+    pub indexed_payload_fields: Vec<String>,
     pub created_at: DateTime<Utc>,
 }
 
@@ -65,8 +102,26 @@ impl CollectionConfig {
             hnsw_ef_search: 50,
             bm25_k1: 1.5,
             bm25_b: 0.75,
+            quantization: Quantization::default(),
+            indexed_payload_fields: Vec::new(),
             created_at: Utc::now(),
         }
+    }
+
+    /// Enable int8 scalar quantization for this collection's in-memory index.
+    pub fn with_quantization(mut self, q: Quantization) -> Self {
+        self.quantization = q;
+        self
+    }
+
+    /// Declare payload fields to index for fast filtered search.
+    pub fn with_indexed_fields<I, S>(mut self, fields: I) -> Self
+    where
+        I: IntoIterator<Item = S>,
+        S: Into<String>,
+    {
+        self.indexed_payload_fields = fields.into_iter().map(Into::into).collect();
+        self
     }
 }
 

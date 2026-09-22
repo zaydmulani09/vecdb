@@ -4,6 +4,7 @@ members = [
   "crates/vecdb-api",
   "crates/vecdb-cli",
   "crates/vecdb-bench",
+  "crates/vecdb-compare",
 ]
 resolver = "2"
 

@@ -39,7 +39,11 @@ impl<'a> PlanExecutor<'a> {
         let allowed_ids: Option<HashSet<String>> = if plan.pre_filter {
             plan.filter_predicate.as_deref().and_then(|pred| {
                 match serde_json::from_str::<serde_json::Value>(pred) {
-                    Ok(fv) => match self.storage.metadata.filter_ids(&fv) {
+                    Ok(fv) => match self
+                        .storage
+                        .metadata
+                        .filter_ids(&fv, &self.storage.config.indexed_payload_fields)
+                    {
                         Ok(ids) => Some(ids.into_iter().collect()),
                         Err(e) => {
                             tracing::warn!("pre-filter failed ({e}), falling back to post-filter");
@@ -82,7 +86,21 @@ impl<'a> PlanExecutor<'a> {
                 let qv = query_vector.ok_or_else(|| {
                     VecDbError::InvalidQuery("dense search requires query_vector".into())
                 })?;
-                self.storage.search_dense(qv, plan.candidate_k)?
+                // Predicate pushdown: for a filtered dense scan, generate
+                // candidates from the filter (Storage picks brute-force over the
+                // matching set vs ANN+post-filter by selectivity) instead of
+                // ANN-then-discard. Falls back to a plain dense scan otherwise.
+                match plan.filter_predicate.as_deref() {
+                    Some(pred) if plan.pre_filter => {
+                        match serde_json::from_str::<serde_json::Value>(pred) {
+                            Ok(fv) => self
+                                .storage
+                                .search_dense_filtered(qv, plan.candidate_k, &fv)?,
+                            Err(_) => self.storage.search_dense(qv, plan.candidate_k)?,
+                        }
+                    }
+                    _ => self.storage.search_dense(qv, plan.candidate_k)?,
+                }
             }
         };
 
@@ -182,40 +200,71 @@ fn extract_strategy(plan: &PhysicalPlan) -> FusionStrategy {
 /// - **Array of conditions**: `[cond, ...]` — AND of all conditions.
 /// - **Legacy flat map**: `{"key": value}` — equality for every key (HTTP API compat).
 pub(crate) fn apply_json_filter(record: &SearchResult, filter: &serde_json::Value) -> bool {
+    apply_filter_with(filter, &|field| resolve_field(record, field))
+}
+
+/// Evaluate a JSON filter against an arbitrary field resolver. This is the one
+/// place the filter grammar lives; both the post-scan record path and the
+/// metadata-store pushdown path share it, so their semantics can never drift.
+///
+/// `resolve(field)` returns the field's value (`None` if absent), where `field`
+/// is `"id"` or a dotted payload path.
+pub(crate) fn apply_filter_with<R>(filter: &serde_json::Value, resolve: &R) -> bool
+where
+    R: Fn(&str) -> Option<serde_json::Value>,
+{
     match filter {
         serde_json::Value::Array(conditions) => {
-            conditions.iter().all(|c| apply_json_filter(record, c))
+            conditions.iter().all(|c| apply_filter_with(c, resolve))
         }
         serde_json::Value::Object(obj) => {
             if obj.contains_key("field") && obj.contains_key("op") && obj.contains_key("value") {
-                eval_condition(record, obj)
+                let (Some(field), Some(op), Some(filter_val)) = (
+                    obj.get("field").and_then(|v| v.as_str()),
+                    obj.get("op").and_then(|v| v.as_str()),
+                    obj.get("value"),
+                ) else {
+                    return false;
+                };
+                resolve(field)
+                    .map(|rv| eval_op(&rv, op, filter_val))
+                    .unwrap_or(false)
             } else {
                 // Legacy flat-map equality (HTTP API SearchRequest.filter).
-                obj.iter().all(|(k, v)| {
-                    resolve_field(record, k)
-                        .map(|rv| eq_values(&rv, v))
-                        .unwrap_or(false)
-                })
+                obj.iter()
+                    .all(|(k, v)| resolve(k).map(|rv| eq_values(&rv, v)).unwrap_or(false))
             }
         }
         _ => false,
     }
 }
 
-fn eval_condition(record: &SearchResult, obj: &serde_json::Map<String, serde_json::Value>) -> bool {
-    let Some(field) = obj.get("field").and_then(|v| v.as_str()) else {
-        return false;
-    };
-    let Some(op) = obj.get("op").and_then(|v| v.as_str()) else {
-        return false;
-    };
-    let Some(filter_val) = obj.get("value") else {
-        return false;
-    };
-    let Some(record_val) = resolve_field(record, field) else {
-        return false;
-    };
-    eval_op(&record_val, op, filter_val)
+/// Collect every field path a filter references (for pushing extraction into
+/// the metadata store). Returns `None` if the filter shape is unsupported.
+pub(crate) fn collect_filter_fields(
+    filter: &serde_json::Value,
+    out: &mut std::collections::BTreeSet<String>,
+) -> bool {
+    match filter {
+        serde_json::Value::Array(cs) => cs.iter().all(|c| collect_filter_fields(c, out)),
+        serde_json::Value::Object(obj) => {
+            if obj.contains_key("field") && obj.contains_key("op") && obj.contains_key("value") {
+                match obj.get("field").and_then(|v| v.as_str()) {
+                    Some(f) => {
+                        out.insert(f.to_string());
+                        true
+                    }
+                    None => false,
+                }
+            } else {
+                for k in obj.keys() {
+                    out.insert(k.to_string());
+                }
+                true
+            }
+        }
+        _ => false,
+    }
 }
 
 /// Resolve a field path from a `SearchResult`.
