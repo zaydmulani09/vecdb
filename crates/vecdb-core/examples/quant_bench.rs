@@ -17,9 +17,7 @@ use std::io::{Read, Result as IoResult};
 use std::path::Path;
 use std::time::Instant;
 
-use vecdb_core::index::{
-    BinaryQuantizedIndex, HnswIndex, IndexBackend, ScalarQuantizedIndex,
-};
+use vecdb_core::index::{BinaryQuantizedIndex, HnswIndex, IndexBackend, ScalarQuantizedIndex};
 use vecdb_core::types::{CollectionConfig, DistanceMetric, Quantization};
 
 fn read_fvecs(path: &Path) -> IoResult<(Vec<Vec<f32>>, usize)> {
@@ -263,9 +261,7 @@ fn main() {
             r.name, r.recall10, r.mem_bytes, r.mean_us, r.p50_us, r.p99_us
         );
     }
-    println!(
-        "\nquantization deltas (int8-flat vs f32-flat, same algorithm):"
-    );
+    println!("\nquantization deltas (int8-flat vs f32-flat, same algorithm):");
     println!(
         "  memory:   {} → {} bytes  ({:.2}× smaller)",
         f32_mem,
@@ -280,9 +276,7 @@ fn main() {
         "  latency:  mean {:.1}µs → {:.1}µs",
         rows[0].mean_us, rows[1].mean_us
     );
-    println!(
-        "\nbinary (1-bit) vs f32-flat:"
-    );
+    println!("\nbinary (1-bit) vs f32-flat:");
     println!(
         "  memory:   {} → {} bytes  ({:.1}× smaller)",
         f32_mem,

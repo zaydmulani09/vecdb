@@ -348,14 +348,25 @@ mod tests {
         let mut idx = BinaryQuantizedIndex::new(&cfg(8));
         let mut data = Vec::new();
         for i in 0..150u32 {
-            data.push((format!("a{i}"), vec![10.0, 10.0, 10.0, 10.0, 0.0, 0.0, 0.0, 0.0]));
+            data.push((
+                format!("a{i}"),
+                vec![10.0, 10.0, 10.0, 10.0, 0.0, 0.0, 0.0, 0.0],
+            ));
         }
         for i in 0..150u32 {
-            data.push((format!("b{i}"), vec![0.0, 0.0, 0.0, 0.0, 10.0, 10.0, 10.0, 10.0]));
+            data.push((
+                format!("b{i}"),
+                vec![0.0, 0.0, 0.0, 0.0, 10.0, 10.0, 10.0, 10.0],
+            ));
         }
         idx.build(data).unwrap();
-        let hits = idx.search(&vec![9.0, 9.0, 9.0, 9.0, 1.0, 1.0, 1.0, 1.0], 10).unwrap();
-        assert!(hits.iter().all(|(id, _)| id.starts_with('a')), "top hits must be cluster A");
+        let hits = idx
+            .search(&vec![9.0, 9.0, 9.0, 9.0, 1.0, 1.0, 1.0, 1.0], 10)
+            .unwrap();
+        assert!(
+            hits.iter().all(|(id, _)| id.starts_with('a')),
+            "top hits must be cluster A"
+        );
         // 8 bits/vec → 1 u64 word/vec = 8 bytes; far below 8*4=32 f32 bytes.
         assert!(idx.code_bytes() <= 300 * 8 + 64);
     }

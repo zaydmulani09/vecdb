@@ -45,7 +45,9 @@ fn find(dir: &Path, names: &[&str]) -> Option<PathBuf> {
 
 fn main() {
     let mut args = std::env::args().skip(1);
-    let dir = args.next().expect("usage: vecdb-compare <dataset-dir> [--n N] [--queries Q] [--systems ...]");
+    let dir = args
+        .next()
+        .expect("usage: vecdb-compare <dataset-dir> [--n N] [--queries Q] [--systems ...]");
     let dir = PathBuf::from(dir);
     let mut n = 100_000usize;
     let mut nq = 1_000usize;
@@ -55,15 +57,24 @@ fn main() {
             "--n" => n = args.next().unwrap().parse().unwrap(),
             "--queries" => nq = args.next().unwrap().parse().unwrap(),
             "--systems" => {
-                systems = args.next().unwrap().split(',').map(|s| s.to_string()).collect()
+                systems = args
+                    .next()
+                    .unwrap()
+                    .split(',')
+                    .map(|s| s.to_string())
+                    .collect()
             }
             other => panic!("unknown arg {other}"),
         }
     }
 
     let base_path = find(&dir, &["sift_base.fvecs", "siftsmall_base.fvecs"]).expect("base fvecs");
-    let query_path = find(&dir, &["sift_query.fvecs", "siftsmall_query.fvecs"]).expect("query fvecs");
-    let gt_path = find(&dir, &["sift_groundtruth.ivecs", "siftsmall_groundtruth.ivecs"]);
+    let query_path =
+        find(&dir, &["sift_query.fvecs", "siftsmall_query.fvecs"]).expect("query fvecs");
+    let gt_path = find(
+        &dir,
+        &["sift_groundtruth.ivecs", "siftsmall_groundtruth.ivecs"],
+    );
 
     println!("loading base (first {n})...");
     let (base, dim) = read_fvecs(&base_path, Some(n)).expect("base");
@@ -84,14 +95,23 @@ fn main() {
             .map(|row| row.into_iter().take(k).map(|i| i.to_string()).collect())
             .collect()
     } else {
-        println!("recomputing exact ground truth on the {n}-vector subset ({} queries)...", queries.len());
+        println!(
+            "recomputing exact ground truth on the {n}-vector subset ({} queries)...",
+            queries.len()
+        );
         let t = Instant::now();
         let g = exact_ground_truth(&base, &queries, k);
         println!("  exact GT in {:.1?}", t.elapsed());
         g
     };
 
-    let bench = Bench { base, dim, queries, truth, k };
+    let bench = Bench {
+        base,
+        dim,
+        queries,
+        truth,
+        k,
+    };
     println!(
         "\ndataset: {n} × {dim}d base, {} queries, k={k}\n",
         bench.queries.len()

@@ -114,7 +114,14 @@ impl MetadataStore {
             for (id, mmap_index, record) in items {
                 let payload = serde_json::to_string(&record.payload)
                     .map_err(|e| VecDbError::SerializationError(e.to_string()))?;
-                stmt.execute(params![id, *mmap_index as i64, payload, record.text, now, now])?;
+                stmt.execute(params![
+                    id,
+                    *mmap_index as i64,
+                    payload,
+                    record.text,
+                    now,
+                    now
+                ])?;
             }
         }
         tx.commit()?;

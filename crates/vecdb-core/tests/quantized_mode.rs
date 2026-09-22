@@ -56,7 +56,10 @@ fn quantized_collection_insert_query_reopen() {
     assert_eq!(c.len().unwrap(), n, "quantized vectors must survive reopen");
     for (i, top_id) in &before_top {
         let hits = c.query(&vec_for(*i, d), 1).unwrap();
-        assert_eq!(&hits[0].id, top_id, "top-1 for query {i} changed across reopen");
+        assert_eq!(
+            &hits[0].id, top_id,
+            "top-1 for query {i} changed across reopen"
+        );
     }
 }
 
@@ -91,7 +94,10 @@ fn binary_collection_persists_and_is_stable_across_reopen() {
     assert_eq!(c.len().unwrap(), n, "binary vectors must survive reopen");
     for (i, top_id) in &before_top {
         let hits = c.query(&vec_for(*i, d), 1).unwrap();
-        assert_eq!(&hits[0].id, top_id, "binary top-1 for query {i} changed across reopen");
+        assert_eq!(
+            &hits[0].id, top_id,
+            "binary top-1 for query {i} changed across reopen"
+        );
     }
 }
 

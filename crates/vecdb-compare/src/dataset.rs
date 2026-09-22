@@ -69,7 +69,11 @@ pub fn exact_ground_truth(base: &[Vec<f32>], queries: &[Vec<f32>], k: usize) -> 
                 })
                 .collect();
             scored.sort_unstable_by(|a, b| a.1.partial_cmp(&b.1).unwrap());
-            scored.into_iter().take(k).map(|(i, _)| i.to_string()).collect()
+            scored
+                .into_iter()
+                .take(k)
+                .map(|(i, _)| i.to_string())
+                .collect()
         })
         .collect()
 }

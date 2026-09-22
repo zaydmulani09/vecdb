@@ -74,8 +74,10 @@ fn embedded_delete_persists_across_reopen() {
     {
         let db = Db::open(&path).unwrap();
         let mut c = db.create_collection("c", 4).unwrap();
-        c.insert("keep", vec![1.0, 0.0, 0.0, 0.0], json!({})).unwrap();
-        c.insert("gone", vec![0.0, 1.0, 0.0, 0.0], json!({})).unwrap();
+        c.insert("keep", vec![1.0, 0.0, 0.0, 0.0], json!({}))
+            .unwrap();
+        c.insert("gone", vec![0.0, 1.0, 0.0, 0.0], json!({}))
+            .unwrap();
         c.delete("gone").unwrap();
         assert_eq!(c.len().unwrap(), 1);
         c.flush().unwrap();

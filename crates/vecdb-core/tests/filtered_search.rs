@@ -64,11 +64,17 @@ fn pushdown_matches_exact_filtered_bruteforce() {
     let query = vec_for(500, d);
     let k = 10;
 
-    let hits = c.query_filtered(&query, k, &json!({ "bucket": target })).unwrap();
+    let hits = c
+        .query_filtered(&query, k, &json!({ "bucket": target }))
+        .unwrap();
 
     // 1. No non-matches leak through.
     for h in &hits {
-        assert_eq!(h.payload["bucket"], target, "non-matching record {} leaked", h.id);
+        assert_eq!(
+            h.payload["bucket"], target,
+            "non-matching record {} leaked",
+            h.id
+        );
     }
     // 2. Exactly the true nearest neighbors among the matches.
     let expect = exact_filtered_topk(&data, &query, target, k);
@@ -104,7 +110,9 @@ fn pushdown_with_payload_index_matches_exact() {
     let target = 7i64;
     let query = vec_for(321, d);
     let k = 10;
-    let hits = c.query_filtered(&query, k, &json!({ "bucket": target })).unwrap();
+    let hits = c
+        .query_filtered(&query, k, &json!({ "bucket": target }))
+        .unwrap();
     for h in &hits {
         assert_eq!(h.payload["bucket"], target);
     }
@@ -123,11 +131,15 @@ fn empty_and_full_filters() {
             .unwrap();
     }
     // Filter matching nothing → empty.
-    let none = c.query_filtered(&vec_for(1, d), 5, &json!({ "bucket": 999 })).unwrap();
+    let none = c
+        .query_filtered(&vec_for(1, d), 5, &json!({ "bucket": 999 }))
+        .unwrap();
     assert!(none.is_empty(), "impossible filter must return no results");
 
     // Weakly selective filter (25% match) still returns only matches.
-    let some = c.query_filtered(&vec_for(1, d), 5, &json!({ "bucket": 1 })).unwrap();
+    let some = c
+        .query_filtered(&vec_for(1, d), 5, &json!({ "bucket": 1 }))
+        .unwrap();
     assert!(!some.is_empty());
     assert!(some.iter().all(|h| h.payload["bucket"] == 1));
 }

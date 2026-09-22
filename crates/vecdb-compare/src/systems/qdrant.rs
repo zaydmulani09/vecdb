@@ -30,7 +30,10 @@ async fn run_async(b: &Bench) -> Result<Row, String> {
         .map_err(|e| format!("qdrant unreachable at {BASE}: {e}"))?;
 
     // Fresh collection (Euclidean).
-    let _ = http.delete(format!("{BASE}/collections/{COLLECTION}")).send().await;
+    let _ = http
+        .delete(format!("{BASE}/collections/{COLLECTION}"))
+        .send()
+        .await;
     // indexing_threshold low so every segment builds its HNSW index (with the
     // default 20000, multi-segment collections on this many cores leave each
     // segment below threshold and unindexed → brute force).
@@ -44,7 +47,10 @@ async fn run_async(b: &Bench) -> Result<Row, String> {
         .await
         .map_err(|e| e.to_string())?;
     if !resp.status().is_success() {
-        return Err(format!("create collection failed: {}", resp.text().await.unwrap_or_default()));
+        return Err(format!(
+            "create collection failed: {}",
+            resp.text().await.unwrap_or_default()
+        ));
     }
 
     // ── Build: bulk upsert + wait until indexed ──────────────────
@@ -62,7 +68,10 @@ async fn run_async(b: &Bench) -> Result<Row, String> {
             .await
             .map_err(|e| e.to_string())?;
         if !resp.status().is_success() {
-            return Err(format!("upsert failed: {}", resp.text().await.unwrap_or_default()));
+            return Err(format!(
+                "upsert failed: {}",
+                resp.text().await.unwrap_or_default()
+            ));
         }
     }
     // Wait for the optimizer to finish indexing all vectors (bounded, so a
@@ -115,14 +124,21 @@ async fn run_async(b: &Bench) -> Result<Row, String> {
         lat.push(t.elapsed().as_micros());
         let ids: Vec<String> = resp["result"]
             .as_array()
-            .map(|a| a.iter().filter_map(|p| p["id"].as_u64().map(|n| n.to_string())).collect())
+            .map(|a| {
+                a.iter()
+                    .filter_map(|p| p["id"].as_u64().map(|n| n.to_string()))
+                    .collect()
+            })
             .unwrap_or_default();
         results.push(ids);
     }
     let total_s = t_all.elapsed().as_secs_f64();
     lat.sort_unstable();
 
-    let _ = http.delete(format!("{BASE}/collections/{COLLECTION}")).send().await;
+    let _ = http
+        .delete(format!("{BASE}/collections/{COLLECTION}"))
+        .send()
+        .await;
     Ok(Row {
         system: "qdrant".to_string(),
         recall10: recall_at_k(&results, &b.truth, b.k),

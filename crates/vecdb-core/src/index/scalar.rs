@@ -520,7 +520,10 @@ mod tests {
         let data: Vec<_> = (0..300u32)
             .map(|i| {
                 let f = i as f32;
-                (format!("v{i}"), (0..8).map(|j| f + j as f32 * 0.3).collect())
+                (
+                    format!("v{i}"),
+                    (0..8).map(|j| f + j as f32 * 0.3).collect(),
+                )
             })
             .collect();
         idx.build(data).unwrap();

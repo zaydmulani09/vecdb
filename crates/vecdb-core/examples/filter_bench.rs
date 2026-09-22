@@ -71,7 +71,11 @@ fn exact_filtered(
         .map(|(i, v)| (i, l2(q, v)))
         .collect();
     scored.sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap());
-    scored.into_iter().take(k).map(|(i, _)| i.to_string()).collect()
+    scored
+        .into_iter()
+        .take(k)
+        .map(|(i, _)| i.to_string())
+        .collect()
 }
 
 fn recall(results: &[Vec<String>], truth: &[Vec<String>], k: usize) -> f64 {
@@ -202,7 +206,10 @@ fn main() {
         "mode", "recall@10", "mean µs", "p50 µs", "p99 µs"
     );
     let row = |name: &str, s: (f64, u128, u128), r: f64| {
-        println!("{:<16} {:>10.4} {:>12.1} {:>10} {:>10}", name, r, s.0, s.1, s.2);
+        println!(
+            "{:<16} {:>10.4} {:>12.1} {:>10} {:>10}",
+            name, r, s.0, s.1, s.2
+        );
     };
     row("unfiltered", unf, f64::NAN); // recall N/A (not bucket-restricted)
     row("pushdown+idx", push, push_recall);
@@ -218,22 +225,19 @@ fn main() {
         "naive post-filter recall@10 = {:.3} at budget 200 and {:.3} at budget {} —",
         naive200_recall, naivefull_recall, n
     );
-    println!(
-        "  it does NOT improve with budget: ANN returns only its bounded neighborhood,"
-    );
-    println!(
-        "  which rarely contains the filtered nearest neighbors at high selectivity."
-    );
+    println!("  it does NOT improve with budget: ANN returns only its bounded neighborhood,");
+    println!("  which rarely contains the filtered nearest neighbors at high selectivity.");
     println!(
         "pushdown+idx mean {:.0}µs vs unfiltered ANN {:.0}µs ({:.2}×) — a payload index keeps",
-        push.0, unf.0, push.0 / unf.0
+        push.0,
+        unf.0,
+        push.0 / unf.0
     );
-    println!(
-        "  filtered search in the same ballpark as unfiltered; without the index the same",
-    );
+    println!("  filtered search in the same ballpark as unfiltered; without the index the same",);
     println!(
         "  query is {:.0}µs ({:.1}× slower) because every payload must be scanned.",
-        push_plain.0, push_plain.0 / push.0
+        push_plain.0,
+        push_plain.0 / push.0
     );
     let _ = std::fs::remove_dir_all(&tmp);
 }

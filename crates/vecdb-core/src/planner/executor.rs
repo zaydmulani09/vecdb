@@ -93,9 +93,10 @@ impl<'a> PlanExecutor<'a> {
                 match plan.filter_predicate.as_deref() {
                     Some(pred) if plan.pre_filter => {
                         match serde_json::from_str::<serde_json::Value>(pred) {
-                            Ok(fv) => self
-                                .storage
-                                .search_dense_filtered(qv, plan.candidate_k, &fv)?,
+                            Ok(fv) => {
+                                self.storage
+                                    .search_dense_filtered(qv, plan.candidate_k, &fv)?
+                            }
                             Err(_) => self.storage.search_dense(qv, plan.candidate_k)?,
                         }
                     }

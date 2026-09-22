@@ -39,8 +39,9 @@ impl Db {
     /// required — the directory holds the per-collection files.
     pub fn open(path: impl AsRef<Path>) -> Result<Self> {
         let root = path.as_ref().to_path_buf();
-        std::fs::create_dir_all(&root)
-            .map_err(|e| VecDbError::StorageError(format!("create_dir_all({root:?}) failed: {e}")))?;
+        std::fs::create_dir_all(&root).map_err(|e| {
+            VecDbError::StorageError(format!("create_dir_all({root:?}) failed: {e}"))
+        })?;
         Ok(Self { root })
     }
 
@@ -51,7 +52,11 @@ impl Db {
 
     /// Create a new collection with default HNSW config. Errors if a
     /// collection of that name already exists.
-    pub fn create_collection(&self, name: impl Into<String>, dimension: usize) -> Result<Collection> {
+    pub fn create_collection(
+        &self,
+        name: impl Into<String>,
+        dimension: usize,
+    ) -> Result<Collection> {
         self.create_collection_with(CollectionConfig::new(name, dimension))
     }
 
@@ -137,11 +142,21 @@ impl Db {
         if !self.collection_exists(name) {
             return Err(VecDbError::CollectionNotFound(name.to_string()));
         }
-        for suffix in &[".db", ".wal", ".vectors", ".hnsw.json", ".ivf.json", ".sq.json", ".bq.json", ".sparse.json"] {
+        for suffix in &[
+            ".db",
+            ".wal",
+            ".vectors",
+            ".hnsw.json",
+            ".ivf.json",
+            ".sq.json",
+            ".bq.json",
+            ".sparse.json",
+        ] {
             let path = self.root.join(format!("{name}{suffix}"));
             if path.exists() {
-                std::fs::remove_file(&path)
-                    .map_err(|e| VecDbError::StorageError(format!("remove {path:?} failed: {e}")))?;
+                std::fs::remove_file(&path).map_err(|e| {
+                    VecDbError::StorageError(format!("remove {path:?} failed: {e}"))
+                })?;
             }
         }
         Ok(())
@@ -206,10 +221,7 @@ impl Collection {
     /// Bulk-insert many `(id, vector, payload)` triples, building the index once
     /// at the end. Far faster than repeated [`Collection::insert`] for loading a
     /// large collection. Returns the number inserted.
-    pub fn insert_batch(
-        &mut self,
-        items: Vec<(VectorId, Vector, Value)>,
-    ) -> Result<usize> {
+    pub fn insert_batch(&mut self, items: Vec<(VectorId, Vector, Value)>) -> Result<usize> {
         let now = Utc::now();
         let records = items
             .into_iter()
@@ -248,7 +260,8 @@ impl Collection {
         k: usize,
         filter: &Value,
     ) -> Result<Vec<SearchResult>> {
-        self.storage.search_dense_filtered(&vector.to_vec(), k, filter)
+        self.storage
+            .search_dense_filtered(&vector.to_vec(), k, filter)
     }
 
     /// Full-text BM25 search over the sparse index.
@@ -322,8 +335,10 @@ mod tests {
         let dir = tempdir().unwrap();
         let db = Db::open(dir.path()).unwrap();
         let mut c = db.create_collection("docs", 3).unwrap();
-        c.insert("a", vec![1.0, 0.0, 0.0], json!({ "n": 1 })).unwrap();
-        c.insert("b", vec![0.0, 1.0, 0.0], json!({ "n": 2 })).unwrap();
+        c.insert("a", vec![1.0, 0.0, 0.0], json!({ "n": 1 }))
+            .unwrap();
+        c.insert("b", vec![0.0, 1.0, 0.0], json!({ "n": 2 }))
+            .unwrap();
         let hits = c.query(&[1.0, 0.0, 0.0], 1).unwrap();
         assert_eq!(hits[0].id, "a");
     }
@@ -387,8 +402,13 @@ mod tests {
         let mut c = db.create_collection("h", 3).unwrap();
         c.insert_text("d1", vec![1.0, 0.0, 0.0], json!({}), "rust vector database")
             .unwrap();
-        c.insert_text("d2", vec![0.0, 1.0, 0.0], json!({}), "python machine learning")
-            .unwrap();
+        c.insert_text(
+            "d2",
+            vec![0.0, 1.0, 0.0],
+            json!({}),
+            "python machine learning",
+        )
+        .unwrap();
         let text_hits = c.query_text("rust database", 5).unwrap();
         assert_eq!(text_hits[0].id, "d1");
         let hybrid = c

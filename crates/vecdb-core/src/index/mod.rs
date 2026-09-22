@@ -171,20 +171,36 @@ impl AnyIndex {
             if path.exists() {
                 match ScalarQuantizedIndex::load_file(&path) {
                     Ok(idx) => return (AnyIndex::ScalarQuantized(idx), true),
-                    Err(_) => return (AnyIndex::ScalarQuantized(ScalarQuantizedIndex::new(config)), false),
+                    Err(_) => {
+                        return (
+                            AnyIndex::ScalarQuantized(ScalarQuantizedIndex::new(config)),
+                            false,
+                        )
+                    }
                 }
             }
-            return (AnyIndex::ScalarQuantized(ScalarQuantizedIndex::new(config)), false);
+            return (
+                AnyIndex::ScalarQuantized(ScalarQuantizedIndex::new(config)),
+                false,
+            );
         }
         if config.quantization == Quantization::Binary {
             let path = data_dir.join(format!("{name}.bq.json"));
             if path.exists() {
                 match BinaryQuantizedIndex::load_file(&path) {
                     Ok(idx) => return (AnyIndex::BinaryQuantized(idx), true),
-                    Err(_) => return (AnyIndex::BinaryQuantized(BinaryQuantizedIndex::new(config)), false),
+                    Err(_) => {
+                        return (
+                            AnyIndex::BinaryQuantized(BinaryQuantizedIndex::new(config)),
+                            false,
+                        )
+                    }
                 }
             }
-            return (AnyIndex::BinaryQuantized(BinaryQuantizedIndex::new(config)), false);
+            return (
+                AnyIndex::BinaryQuantized(BinaryQuantizedIndex::new(config)),
+                false,
+            );
         }
         match config.index_type {
             IndexType::IVF => {

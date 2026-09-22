@@ -201,8 +201,10 @@ impl Storage {
         self.wal.append_batch(&wal_entries)?;
         drop(wal_entries);
 
-        let refs: Vec<(String, usize, &VectorRecord)> =
-            items.iter().map(|(id, idx, rec)| (id.clone(), *idx, rec)).collect();
+        let refs: Vec<(String, usize, &VectorRecord)> = items
+            .iter()
+            .map(|(id, idx, rec)| (id.clone(), *idx, rec))
+            .collect();
         self.metadata.upsert_batch(&refs)?;
         drop(refs);
         let count = items.len();

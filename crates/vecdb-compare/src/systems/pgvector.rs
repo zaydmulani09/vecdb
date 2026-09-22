@@ -125,19 +125,31 @@ async fn run_async(b: &Bench, conn_str: &str) -> Result<Row, String> {
             .query(sel_sql.as_str(), &[])
             .await
             .map_err(|e| e.to_string())?;
-        results.push(rows.iter().map(|r| r.get::<_, i32>(0).to_string()).collect::<Vec<_>>());
+        results.push(
+            rows.iter()
+                .map(|r| r.get::<_, i32>(0).to_string())
+                .collect::<Vec<_>>(),
+        );
 
         // Server-side execution time (text EXPLAIN, parse "Execution Time:").
         let explain_sql = format!(
             "EXPLAIN (ANALYZE) SELECT id FROM items ORDER BY emb <-> '{lit}'::vector LIMIT {}",
             b.k
         );
-        let ex_rows = client.query(explain_sql.as_str(), &[]).await.map_err(|e| e.to_string())?;
+        let ex_rows = client
+            .query(explain_sql.as_str(), &[])
+            .await
+            .map_err(|e| e.to_string())?;
         let mut ms = 0.0f64;
         for r in &ex_rows {
             let line: String = r.get(0);
             if let Some(rest) = line.trim().strip_prefix("Execution Time:") {
-                ms = rest.trim().trim_end_matches("ms").trim().parse().unwrap_or(0.0);
+                ms = rest
+                    .trim()
+                    .trim_end_matches("ms")
+                    .trim()
+                    .parse()
+                    .unwrap_or(0.0);
             }
         }
         lat.push((ms * 1000.0) as u128); // µs

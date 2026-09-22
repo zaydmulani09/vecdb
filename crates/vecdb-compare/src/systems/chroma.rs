@@ -35,7 +35,9 @@ async fn run_async(b: &Bench) -> Result<Row, String> {
 
     // Fresh collection (L2 to match SIFT ground truth).
     let _ = http
-        .delete(format!("{v1}/collections/bench?tenant=default_tenant&database=default_database"))
+        .delete(format!(
+            "{v1}/collections/bench?tenant=default_tenant&database=default_database"
+        ))
         .send()
         .await;
     let created: serde_json::Value = http
@@ -71,7 +73,10 @@ async fn run_async(b: &Bench) -> Result<Row, String> {
             .await
             .map_err(|e| e.to_string())?;
         if !resp.status().is_success() {
-            return Err(format!("chroma add failed: {}", resp.text().await.unwrap_or_default()));
+            return Err(format!(
+                "chroma add failed: {}",
+                resp.text().await.unwrap_or_default()
+            ));
         }
     }
     let build_s = t.elapsed().as_secs_f64();
@@ -97,7 +102,11 @@ async fn run_async(b: &Bench) -> Result<Row, String> {
         lat.push(t.elapsed().as_micros());
         let ids: Vec<String> = resp["ids"][0]
             .as_array()
-            .map(|a| a.iter().filter_map(|x| x.as_str().map(|s| s.to_string())).collect())
+            .map(|a| {
+                a.iter()
+                    .filter_map(|x| x.as_str().map(|s| s.to_string()))
+                    .collect()
+            })
             .unwrap_or_default();
         results.push(ids);
     }
