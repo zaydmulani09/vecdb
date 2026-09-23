@@ -1,5 +1,5 @@
 # Stage 1 — builder: compile static binary with musl
-FROM rust:1.77-slim AS builder
+FROM rust:1.83-slim AS builder
 
 RUN apt-get update && apt-get install -y musl-tools && rm -rf /var/lib/apt/lists/*
 RUN rustup target add x86_64-unknown-linux-musl
